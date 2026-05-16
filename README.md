@@ -1,5 +1,25 @@
 # Telegram Margin Bot
 
+## Модуль пошуку рідин Autofun CRM
+
+У боті є окремий каталоговий модуль `telegram_catalog_bot/catalog_search`.
+Для роботи кнопки `🔎 Пошук рідин` додайте в `.env` CRM-параметри:
+
+```env
+AUTOFUN_BASE_URL=https://cs.autofun.at
+AF_IDS_USERNAME=your_af_ids_username
+AF_IDS_PASSWORD=your_af_ids_password
+CHROME_BIN=/Users/aleksandrbortko/Downloads/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing
+CHROMEDRIVER_PATH=/Users/aleksandrbortko/Downloads/chromedriver-mac-arm64/chromedriver
+CATALOG_CHROME_PROFILE_DIR=.crm_chrome_profile
+CATALOG_DEBUG_DIR=catalog_search_debug
+CATALOG_SEARCH_HEADLESS=false
+CATALOG_SEARCH_LIMIT=20
+```
+
+Перший запуск відкриває CRM через Selenium і логіниться через AF IDS.
+Далі сесія браузера перевикористовується через `.crm_chrome_profile`.
+
 ## Локальный запуск на Mac
 
 1. Перейдите в папку проекта:

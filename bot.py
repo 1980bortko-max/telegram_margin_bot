@@ -21,6 +21,11 @@ from catalogs import (
 )
 from margin_logic import calculate_margin_result
 from survey_logic import start_survey, handle_survey_message, is_survey_active
+from telegram_catalog_bot.catalog_search.liquids_search import (
+    LiquidsFilters,
+    format_products_for_telegram,
+    search_liquids,
+)
 
 
 bot = Bot(token=TOKEN)
@@ -94,6 +99,28 @@ PROMO_TITLES = {
     "discount_amount": "Оберіть бажаний розмір знижки по промокоду. Наприклад: 5%, 10%, 15%",
 }
 
+LIQUIDS_SEARCH_FIELDS = [
+    "brand",
+    "liquid_type",
+    "viscosity",
+    "color",
+    "volume_from",
+    "volume_to",
+    "composition",
+    "article",
+]
+
+LIQUIDS_SEARCH_TITLES = {
+    "brand": "Бренд",
+    "liquid_type": "Тип",
+    "viscosity": "В’язкість",
+    "color": "Колір",
+    "volume_from": "Обʼєм від",
+    "volume_to": "Обʼєм до",
+    "composition": "Склад / специфікація",
+    "article": "Номер / артикул",
+}
+
 
 after_result_keyboard_user = ReplyKeyboardMarkup(
     keyboard=[
@@ -151,6 +178,14 @@ access_action_keyboard = ReplyKeyboardMarkup(
         [KeyboardButton(text="✅ Увімкнути доступ")],
         [KeyboardButton(text="❌ Вимкнути доступ")],
         [KeyboardButton(text="🔙 До списку менеджерів")],
+        [KeyboardButton(text="🔙 Головне меню")],
+    ],
+    resize_keyboard=True
+)
+
+skip_filter_keyboard = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="⏭ Пропустити")],
         [KeyboardButton(text="🔙 Головне меню")],
     ],
     resize_keyboard=True
@@ -512,6 +547,7 @@ def get_admin_telegram_ids() -> List[int]:
 def get_main_keyboard(user_id: int):
     keyboard = [
         [KeyboardButton(text="Оновити довідники")],
+        [KeyboardButton(text="🔎 Пошук рідин")],
         [KeyboardButton(text="Розрахувати ціну")],
         [KeyboardButton(text="📝 Опитувальник")],
     ]
@@ -1092,6 +1128,82 @@ def reset_user_calculation(user_id: int):
     user_state[user_id] = {}
 
 
+def is_skip_filter_answer(text: str) -> bool:
+    return text in ("⏭ пропустити", "пропустити", "skip", "-")
+
+
+async def start_liquids_search(message: types.Message):
+    user_state[message.from_user.id] = {
+        "step": "catalog_liquids_filter",
+        "field_index": 0,
+        "answers": {},
+    }
+    await ask_liquids_filter(message)
+
+
+async def ask_liquids_filter(message: types.Message):
+    user_id = message.from_user.id
+    state = user_state.get(user_id, {})
+    index = state.get("field_index", 0)
+
+    if index >= len(LIQUIDS_SEARCH_FIELDS):
+        await run_liquids_search(message)
+        return
+
+    field = LIQUIDS_SEARCH_FIELDS[index]
+    await message.answer(
+        f"🔎 Пошук рідин\n\n{LIQUIDS_SEARCH_TITLES[field]}:\n"
+        "Введи значення або натисни «⏭ Пропустити».",
+        reply_markup=skip_filter_keyboard
+    )
+
+
+async def handle_liquids_filter_answer(message: types.Message, raw_text: str, text: str):
+    user_id = message.from_user.id
+    state = user_state.get(user_id, {})
+    index = state.get("field_index", 0)
+
+    if index >= len(LIQUIDS_SEARCH_FIELDS):
+        await run_liquids_search(message)
+        return
+
+    field = LIQUIDS_SEARCH_FIELDS[index]
+    value = "" if is_skip_filter_answer(text) else normalize_text(raw_text)
+
+    state.setdefault("answers", {})[field] = value
+    state["field_index"] = index + 1
+    user_state[user_id] = state
+
+    await ask_liquids_filter(message)
+
+
+async def run_liquids_search(message: types.Message):
+    user_id = message.from_user.id
+    state = user_state.get(user_id, {})
+    filters = LiquidsFilters.from_dict(state.get("answers", {}))
+
+    await message.answer("🔎 Шукаю рідини в Autofun CRM...")
+
+    try:
+        products = await asyncio.to_thread(search_liquids, filters)
+    except Exception as e:
+        user_state.pop(user_id, None)
+        await message.answer(
+            f"❌ Помилка пошуку рідин: {e}",
+            reply_markup=get_main_keyboard(user_id)
+        )
+        return
+
+    for chunk in format_products_for_telegram(products):
+        await message.answer(chunk)
+
+    await message.answer(
+        f"✅ Пошук завершено. Знайдено товарів: {len(products)}",
+        reply_markup=get_main_keyboard(user_id)
+    )
+    user_state.pop(user_id, None)
+
+
 async def show_calc_client_groups_page(message: types.Message, page: int):
     catalogs = load_catalogs()
     client_groups = catalogs.get("calc_client_groups", [])
@@ -1646,6 +1758,14 @@ async def handle_message(message: types.Message):
             "Повернулись у головне меню.",
             reply_markup=get_main_keyboard(user_id)
         )
+        return
+
+    if text == "🔎 пошук рідин":
+        await start_liquids_search(message)
+        return
+
+    if step == "catalog_liquids_filter":
+        await handle_liquids_filter_answer(message, raw_text, text)
         return
 
     if text == "💰 індивідуальна націнка":

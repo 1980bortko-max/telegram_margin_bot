@@ -1,0 +1,212 @@
+# -*- coding: utf-8 -*-
+
+import os
+import threading
+import time
+from pathlib import Path
+from typing import Optional
+
+from selenium import webdriver
+from selenium.common.exceptions import TimeoutException
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import WebDriverWait
+
+from config import (
+    AF_IDS_PASSWORD,
+    AF_IDS_USERNAME,
+    AUTOFUN_BASE_URL,
+    CATALOG_CHROME_PROFILE_DIR,
+    CATALOG_DEBUG_DIR,
+    CATALOG_SEARCH_HEADLESS,
+    CHROME_BIN,
+    CHROMEDRIVER_PATH,
+)
+from .filter_helpers import (
+    SELECTORS,
+    debug_log,
+    safe_click,
+    save_debug_screenshot,
+    wait_overlay_gone,
+)
+
+
+class CrmSession:
+    def __init__(self) -> None:
+        self._driver = None
+        self._wait = None
+        self.lock = threading.Lock()
+        self.debug_dir = Path(CATALOG_DEBUG_DIR)
+
+    @property
+    def driver(self):
+        if self._driver is None:
+            self._driver = self._create_driver()
+            self._wait = WebDriverWait(self._driver, 25)
+        return self._driver
+
+    @property
+    def wait(self) -> WebDriverWait:
+        if self._wait is None:
+            self._wait = WebDriverWait(self.driver, 25)
+        return self._wait
+
+    def _create_driver(self):
+        options = Options()
+        options.add_argument("--disable-blink-features=AutomationControlled")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--start-maximized")
+
+        if CATALOG_SEARCH_HEADLESS:
+            options.add_argument("--headless=new")
+
+        profile_dir = Path(CATALOG_CHROME_PROFILE_DIR).expanduser()
+        if not profile_dir.is_absolute():
+            profile_dir = Path.cwd() / profile_dir
+        profile_dir.mkdir(parents=True, exist_ok=True)
+        options.add_argument(f"--user-data-dir={profile_dir}")
+
+        if CHROME_BIN and os.path.exists(CHROME_BIN):
+            options.binary_location = CHROME_BIN
+
+        if CHROMEDRIVER_PATH and os.path.exists(CHROMEDRIVER_PATH):
+            service = Service(CHROMEDRIVER_PATH)
+            return webdriver.Chrome(service=service, options=options)
+
+        return webdriver.Chrome(options=options)
+
+    def close(self) -> None:
+        if self._driver is not None:
+            self._driver.quit()
+            self._driver = None
+            self._wait = None
+
+    def ensure_ready(self) -> None:
+        try:
+            self.open_dashboard()
+            if self._looks_logged_in():
+                return
+        except Exception:
+            pass
+
+        self.login()
+        self.open_dashboard()
+
+    def login(self) -> None:
+        if not AF_IDS_PASSWORD:
+            raise RuntimeError("AF_IDS_PASSWORD is required for Autofun CRM login")
+
+        driver = self.driver
+        wait = self.wait
+        login_url = f"{AUTOFUN_BASE_URL.rstrip('/')}/login"
+
+        debug_log(f"Open Autofun login: {login_url}", self.debug_dir)
+        driver.get(login_url)
+        self._try_accept_cookies()
+
+        af_ids_button = wait.until(
+            EC.element_to_be_clickable((By.XPATH, SELECTORS["login"]["af_ids_button"]))
+        )
+        if not safe_click(driver, af_ids_button):
+            raise RuntimeError("AF IDS login button is not clickable")
+
+        username = wait.until(EC.element_to_be_clickable((By.XPATH, SELECTORS["login"]["username"])))
+        username.clear()
+        username.send_keys(AF_IDS_USERNAME)
+
+        password = wait.until(EC.element_to_be_clickable((By.XPATH, SELECTORS["login"]["password"])))
+        password.clear()
+        password.send_keys(AF_IDS_PASSWORD)
+
+        submit = wait.until(EC.element_to_be_clickable((By.XPATH, SELECTORS["login"]["submit"])))
+        if not safe_click(driver, submit):
+            raise RuntimeError("AF IDS submit button is not clickable")
+
+        wait.until(EC.url_contains("/console"))
+        wait_overlay_gone(driver, 20)
+        debug_log("Autofun login OK", self.debug_dir)
+        save_debug_screenshot(driver, self.debug_dir, "login_ok")
+
+    def open_dashboard(self) -> None:
+        url = f"{AUTOFUN_BASE_URL.rstrip('/')}/console/dashboard"
+        debug_log(f"Open dashboard: {url}", self.debug_dir)
+        self.driver.get(url)
+        try:
+            self.wait.until(
+                EC.any_of(
+                    EC.presence_of_element_located((By.XPATH, SELECTORS["shell"]["dashboard_ready"])),
+                    EC.url_contains("/login"),
+                )
+            )
+        except TimeoutException:
+            save_debug_screenshot(self.driver, self.debug_dir, "dashboard_timeout")
+            raise
+        wait_overlay_gone(self.driver, 15)
+        time.sleep(0.5)
+
+    def open_liquids_from_sidebar(self) -> None:
+        self.ensure_ready()
+        driver = self.driver
+        wait = self.wait
+
+        for xpath in SELECTORS["shell"]["liquids_sidebar"]:
+            items = driver.find_elements(By.XPATH, xpath)
+            visible = [item for item in items if item.is_displayed()]
+            if not visible:
+                continue
+
+            previous_url = driver.current_url
+            debug_log(f"Click sidebar Liquids via selector: {xpath}", self.debug_dir)
+            if not safe_click(driver, visible[0]):
+                continue
+
+            try:
+                wait.until(
+                    EC.any_of(
+                        EC.url_changes(previous_url),
+                        EC.presence_of_element_located((By.XPATH, SELECTORS["liquids"]["results_area"])),
+                        EC.presence_of_element_located((By.XPATH, SELECTORS["liquids"]["search_button"])),
+                    )
+                )
+            except TimeoutException:
+                pass
+
+            wait_overlay_gone(driver, 20)
+            save_debug_screenshot(driver, self.debug_dir, "liquids_opened")
+            return
+
+        save_debug_screenshot(driver, self.debug_dir, "liquids_sidebar_not_found")
+        raise RuntimeError("Не знайшов пункт меню 'Рідини' у sidebar")
+
+    def _try_accept_cookies(self) -> None:
+        try:
+            button = WebDriverWait(self.driver, 3).until(
+                EC.element_to_be_clickable((By.XPATH, SELECTORS["login"]["cookies"]))
+            )
+            safe_click(self.driver, button)
+        except Exception:
+            pass
+
+    def _looks_logged_in(self) -> bool:
+        current_url = self.driver.current_url or ""
+        if "/login" in current_url:
+            return False
+        try:
+            self.driver.find_element(By.XPATH, SELECTORS["shell"]["dashboard_ready"])
+            return "/console" in current_url
+        except Exception:
+            return False
+
+
+_SESSION: Optional[CrmSession] = None
+
+
+def get_crm_session() -> CrmSession:
+    global _SESSION
+    if _SESSION is None:
+        _SESSION = CrmSession()
+    return _SESSION
+
