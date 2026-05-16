@@ -69,7 +69,8 @@ def search_liquids(filters: LiquidsFilters, limit: int = CATALOG_SEARCH_LIMIT) -
         require_liquids_page(driver)
         save_debug_screenshot(driver, session.debug_dir, "liquids_before_filters")
 
-        apply_liquids_filters(filters)
+        apply_liquids_filters(driver, filters, session.debug_dir)
+        save_debug_screenshot(driver, session.debug_dir, "liquids_after_filters")
 
         search_button = find_liquids_search_button(driver)
         if not safe_click(driver, search_button):
@@ -83,10 +84,12 @@ def search_liquids(filters: LiquidsFilters, limit: int = CATALOG_SEARCH_LIMIT) -
         return products[:limit]
 
 
-def apply_liquids_filters(filters: LiquidsFilters) -> None:
+def apply_liquids_filters(driver, filters: LiquidsFilters, debug_dir) -> None:
     values = filters.active_values()
     for field_name, value in values.items():
-        set_filter_value(get_crm_session().driver, field_name, value)
+        debug_log(f"Set Liquids filter: {field_name}={value}", debug_dir)
+        set_filter_value(driver, field_name, value)
+        debug_log(f"Set Liquids filter OK: {field_name}", debug_dir)
 
 
 def format_products_for_telegram(products: List[CatalogProduct]) -> List[str]:

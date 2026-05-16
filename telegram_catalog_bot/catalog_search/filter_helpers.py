@@ -243,7 +243,7 @@ def quasar_set_value(driver, inp, value: str, timeout: float = 2.0) -> None:
     try:
         safe_click(driver, field or inp)
         time.sleep(0.25)
-        if click_matching_quasar_option(driver, value):
+        if click_matching_quasar_option(driver, value) and wait_field_choice(driver, field or inp, value):
             return
         driver.execute_script(
             """
@@ -256,7 +256,7 @@ def quasar_set_value(driver, inp, value: str, timeout: float = 2.0) -> None:
         )
         inp.send_keys(value)
         time.sleep(0.35)
-        if click_matching_quasar_option(driver, value):
+        if click_matching_quasar_option(driver, value) and wait_field_choice(driver, field or inp, value):
             return
         inp.send_keys(Keys.TAB)
     except Exception:
@@ -304,13 +304,11 @@ def _candidate_input_xpath(labels: Iterable[str], placeholders: Iterable[str]) -
     for label in labels:
         literal = xpath_literal(label)
         label_checks.append(f"@aria-label={literal}")
-        label_checks.append(f"contains(@aria-label,{literal})")
 
     placeholder_checks = []
     for placeholder in placeholders:
         literal = xpath_literal(placeholder)
         placeholder_checks.append(f"@placeholder={literal}")
-        placeholder_checks.append(f"contains(@placeholder,{literal})")
 
     checks = label_checks + placeholder_checks
     direct = ".//input[" + " or ".join(checks) + "]"
@@ -318,7 +316,10 @@ def _candidate_input_xpath(labels: Iterable[str], placeholders: Iterable[str]) -
     field_checks = []
     for label in labels:
         literal = xpath_literal(label)
-        field_checks.append(f".//*[normalize-space()={literal} or contains(normalize-space(),{literal})]")
+        field_checks.append(
+            ".//*[contains(concat(' ', normalize-space(@class), ' '), ' q-field__label ') "
+            f"and normalize-space()={literal}]"
+        )
     via_field = (
         ".//*[contains(@class,'q-field') or contains(@class,'q-select') or contains(@class,'q-input')]"
         "[" + " or ".join(field_checks) + "]//input"
@@ -378,6 +379,28 @@ def click_matching_quasar_option(driver, value: str) -> bool:
     if not value_norm:
         return False
 
+    option_css = (
+        ".q-menu .q-item, "
+        ".q-menu [role='option'], "
+        ".q-virtual-scroll__content .q-item, "
+        "[role='listbox'] .q-item, "
+        ".q-item[role='option']"
+    )
+    end_at = time.time() + 3
+
+    while time.time() < end_at:
+        try:
+            options = driver.find_elements(By.CSS_SELECTOR, option_css)
+            visible = [opt for opt in options if opt.is_displayed() and normalize_choice_text(opt.text)]
+            for option in visible:
+                if normalize_choice_text(option.text) == value_norm:
+                    if safe_click(driver, clickable_ancestor(driver, option)):
+                        time.sleep(0.25)
+                        return True
+        except Exception:
+            pass
+        time.sleep(0.1)
+
     js_clicked = driver.execute_script(
         """
         const target = arguments[0];
@@ -417,22 +440,33 @@ def click_matching_quasar_option(driver, value: str) -> bool:
         time.sleep(0.25)
         return True
 
-    option_css = (
-        ".q-menu .q-item, "
-        ".q-menu [role='option'], "
-        ".q-virtual-scroll__content .q-item, "
-        "[role='listbox'] .q-item, "
-        ".q-item[role='option']"
-    )
-    end_at = time.time() + 3
+    return False
+
+
+def wait_field_choice(driver, field, value: str, timeout: float = 2.0) -> bool:
+    value_norm = normalize_choice_text(value)
+    end_at = time.time() + timeout
 
     while time.time() < end_at:
         try:
-            options = driver.find_elements(By.CSS_SELECTOR, option_css)
-            visible = [opt for opt in options if opt.is_displayed() and normalize_choice_text(opt.text)]
-            for option in visible:
-                if normalize_choice_text(option.text) == value_norm:
-                    return safe_click(driver, clickable_ancestor(driver, option))
+            parts = driver.execute_script(
+                """
+                const root = arguments[0];
+                const parts = [];
+                const push = (value) => {
+                    const text = String(value || '').trim();
+                    if (text) parts.push(...text.split(/\\n+/));
+                };
+                push(root.innerText || root.textContent || '');
+                root.querySelectorAll('input, .q-chip, .q-chip__content, .q-field__native').forEach((el) => {
+                    push(el.value || el.innerText || el.textContent || '');
+                });
+                return parts;
+                """,
+                field,
+            )
+            if any(normalize_choice_text(part) == value_norm for part in parts):
+                return True
         except Exception:
             pass
         time.sleep(0.1)
