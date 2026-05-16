@@ -26,6 +26,7 @@ from config import (
 )
 from .filter_helpers import (
     SELECTORS,
+    clickable_ancestor,
     debug_log,
     safe_click,
     save_debug_screenshot,
@@ -86,6 +87,8 @@ class CrmSession:
 
     def ensure_ready(self) -> None:
         try:
+            if self._looks_logged_in():
+                return
             self.open_dashboard()
             if self._looks_logged_in():
                 return
@@ -163,7 +166,8 @@ class CrmSession:
 
             previous_url = driver.current_url
             debug_log(f"Click sidebar Liquids via selector: {xpath}", self.debug_dir)
-            if not safe_click(driver, visible[0]):
+            click_target = clickable_ancestor(driver, visible[0])
+            if not safe_click(driver, click_target):
                 continue
 
             try:

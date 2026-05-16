@@ -21,13 +21,13 @@ SELECTORS: Dict[str, Any] = {
             "//main | //div[contains(@class,'q-page')]"
         ),
         "liquids_sidebar": [
+            "//a[contains(@href,'/console/liquid')]",
             "//aside//*[contains(normalize-space(),'Рідини') or contains(normalize-space(),'Liquids')]",
             (
                 "//div[contains(@class,'q-drawer')]//*[contains(normalize-space(),'Рідини') "
                 "or contains(normalize-space(),'Liquids')]"
             ),
             "//nav//*[contains(normalize-space(),'Рідини') or contains(normalize-space(),'Liquids')]",
-            "//a[contains(@href,'/console/liquid')]",
         ],
         "liquids_tab": (
             "//*[contains(@class,'q-tab') or contains(@class,'q-router-link') or contains(@class,'q-item')]"
@@ -51,6 +51,10 @@ SELECTORS: Dict[str, Any] = {
             "or contains(normalize-space(),'FILTER')]][.//input]"
             "[contains(@class,'q-card') or contains(@class,'q-page') or contains(@class,'q-pa') "
             "or contains(@class,'q-layout') or contains(@class,'q-tab-panel') or self::div]"
+        ),
+        "filter_panel_css": (
+            ".filter-tires-container, .filter-liquids-container, "
+            ".filter-tires-body-card, .filter-liquids-body-card"
         ),
         "results_area": (
             "//table | //div[contains(@class,'q-table')] | "
@@ -161,6 +165,19 @@ def safe_click(driver, el) -> bool:
             return False
 
 
+def clickable_ancestor(driver, el):
+    try:
+        return driver.execute_script(
+            """
+            const el = arguments[0];
+            return el.closest('a[href], button, [role="button"], .q-item, .q-btn') || el;
+            """,
+            el,
+        )
+    except Exception:
+        return el
+
+
 def quasar_get_value(driver, inp) -> str:
     try:
         return (inp.get_attribute("value") or "").strip()
@@ -202,11 +219,30 @@ def quasar_set_value(driver, inp, value: str, timeout: float = 2.0) -> None:
     value = (value or "").strip()
     quasar_clear_input(driver, inp)
 
+    field = None
     try:
-        inp.click()
+        field = driver.execute_script(
+            "return arguments[0].closest('.q-field, .q-select, .q-input') || arguments[0];",
+            inp,
+        )
+    except Exception:
+        field = inp
+
+    try:
+        safe_click(driver, field or inp)
+        driver.execute_script(
+            """
+            const el = arguments[0];
+            el.removeAttribute('readonly');
+            el.removeAttribute('disabled');
+            el.focus();
+            """,
+            inp,
+        )
         inp.send_keys(value)
-        time.sleep(0.1)
-        click_matching_quasar_option(driver, value)
+        time.sleep(0.35)
+        if click_matching_quasar_option(driver, value):
+            return
         inp.send_keys(Keys.TAB)
     except Exception:
         pass
@@ -269,14 +305,28 @@ def _candidate_input_xpath(labels: Iterable[str], placeholders: Iterable[str]) -
 
 
 def find_liquids_filter_panel(driver):
-    panels = driver.find_elements(By.XPATH, SELECTORS["liquids"]["filter_panel"])
-    visible_panels = [panel for panel in panels if panel.is_displayed()]
+    panels = driver.find_elements(By.CSS_SELECTOR, SELECTORS["liquids"]["filter_panel_css"])
+    visible_panels = [
+        panel for panel in panels
+        if panel.is_displayed() and panel.find_elements(By.XPATH, ".//input")
+    ]
+
+    if not visible_panels:
+        panels = driver.find_elements(By.XPATH, SELECTORS["liquids"]["filter_panel"])
+        visible_panels = [
+            panel for panel in panels
+            if panel.is_displayed() and panel.find_elements(By.XPATH, ".//input")
+        ]
+
     if not visible_panels:
         raise RuntimeError("Не знайшов блок фільтрів на сторінці Рідини")
 
-    # Prefer the smallest visible block that still contains all filters. This avoids
-    # accidentally using the global header search or another open tab.
-    visible_panels.sort(key=lambda panel: panel.size.get("height", 999999) * panel.size.get("width", 999999))
+    # Pick the visible panel with the most inputs. It is the real Liquids filters
+    # card; smaller matches are often individual q-field wrappers.
+    visible_panels.sort(
+        key=lambda panel: len([inp for inp in panel.find_elements(By.XPATH, ".//input") if inp.is_displayed()]),
+        reverse=True,
+    )
     return visible_panels[0]
 
 
