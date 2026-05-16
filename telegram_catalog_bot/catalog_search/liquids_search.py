@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 from typing import Dict, List
 
+from selenium.webdriver.common.by import By
+
 from config import CATALOG_SEARCH_LIMIT
 from .crm_session import get_crm_session
 from .filter_helpers import (

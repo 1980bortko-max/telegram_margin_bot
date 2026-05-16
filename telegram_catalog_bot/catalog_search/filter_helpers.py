@@ -277,6 +277,10 @@ def xpath_literal(value: str) -> str:
     return "concat(" + ', "\"\'\"", '.join(f"'{part}'" for part in parts) + ")"
 
 
+def normalize_choice_text(value: str) -> str:
+    return " ".join((value or "").replace("–", "-").replace("—", "-").split()).lower()
+
+
 def _candidate_input_xpath(labels: Iterable[str], placeholders: Iterable[str]) -> str:
     label_checks = []
     for label in labels:
@@ -352,41 +356,31 @@ def find_filter_input(driver, filter_name: str, timeout: int = 10):
 
 
 def click_matching_quasar_option(driver, value: str) -> bool:
-    value_norm = value.strip().lower()
+    value_norm = normalize_choice_text(value)
     if not value_norm:
         return False
-    value_norm_literal = xpath_literal(value_norm)
-    value_literal = xpath_literal(value)
 
-    option_xpaths = [
-        (
-            "//*[contains(@class,'q-menu') or contains(@class,'q-virtual-scroll') or "
-            "contains(@class,'q-item')]//*[contains(translate(normalize-space(), "
-            "'ABCDEFGHIJKLMNOPQRSTUVWXYZАБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЬЮЯ', "
-            "'abcdefghijklmnopqrstuvwxyzабвгґдеєжзиіїйклмнопрстуфхцчшщьюя'), "
-            f"{value_norm_literal})]"
-        ),
-        (
-            "//*[contains(@class,'q-menu') or contains(@class,'q-virtual-scroll')]"
-            f"//*[normalize-space()={value_literal}]"
-        ),
-    ]
+    option_css = (
+        ".q-menu .q-item, "
+        ".q-menu [role='option'], "
+        ".q-virtual-scroll__content .q-item, "
+        "[role='listbox'] .q-item, "
+        ".q-item[role='option']"
+    )
+    end_at = time.time() + 3
 
-    for xpath in option_xpaths:
+    while time.time() < end_at:
         try:
-            options = driver.find_elements(By.XPATH, xpath)
-            visible = [opt for opt in options if opt.is_displayed()]
-            if visible:
-                return safe_click(driver, visible[0])
+            options = driver.find_elements(By.CSS_SELECTOR, option_css)
+            visible = [opt for opt in options if opt.is_displayed() and normalize_choice_text(opt.text)]
+            for option in visible:
+                if normalize_choice_text(option.text) == value_norm:
+                    return safe_click(driver, clickable_ancestor(driver, option))
         except Exception:
             pass
+        time.sleep(0.1)
 
-    try:
-        active = driver.switch_to.active_element
-        active.send_keys(Keys.ENTER)
-        return True
-    except Exception:
-        return False
+    return False
 
 
 def set_filter_value(driver, filter_name: str, value: str) -> None:
