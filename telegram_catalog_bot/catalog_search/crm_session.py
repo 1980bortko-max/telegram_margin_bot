@@ -152,6 +152,9 @@ class CrmSession:
         driver = self.driver
         wait = self.wait
 
+        if self._is_liquids_page():
+            return
+
         for xpath in SELECTORS["shell"]["liquids_sidebar"]:
             items = driver.find_elements(By.XPATH, xpath)
             visible = [item for item in items if item.is_displayed()]
@@ -166,7 +169,7 @@ class CrmSession:
             try:
                 wait.until(
                     EC.any_of(
-                        EC.url_changes(previous_url),
+                        EC.url_contains("/console/liquid"),
                         EC.presence_of_element_located((By.XPATH, SELECTORS["liquids"]["results_area"])),
                         EC.presence_of_element_located((By.XPATH, SELECTORS["liquids"]["search_button"])),
                     )
@@ -175,7 +178,18 @@ class CrmSession:
                 pass
 
             wait_overlay_gone(driver, 20)
-            save_debug_screenshot(driver, self.debug_dir, "liquids_opened")
+            time.sleep(0.5)
+            if self._is_liquids_page():
+                save_debug_screenshot(driver, self.debug_dir, "liquids_opened")
+                return
+
+            debug_log(
+                f"Liquids click did not open /console/liquid. Previous={previous_url}, current={driver.current_url}",
+                self.debug_dir,
+            )
+
+        if self._click_liquids_tab_if_open():
+            save_debug_screenshot(driver, self.debug_dir, "liquids_tab_opened")
             return
 
         save_debug_screenshot(driver, self.debug_dir, "liquids_sidebar_not_found")
@@ -200,6 +214,30 @@ class CrmSession:
         except Exception:
             return False
 
+    def _is_liquids_page(self) -> bool:
+        current_url = self.driver.current_url or ""
+        return "/console/liquid" in current_url
+
+    def _click_liquids_tab_if_open(self) -> bool:
+        driver = self.driver
+        wait = self.wait
+        tabs = driver.find_elements(By.XPATH, SELECTORS["shell"]["liquids_tab"])
+        visible = [tab for tab in tabs if tab.is_displayed()]
+
+        for tab in visible:
+            if not safe_click(driver, tab):
+                continue
+            try:
+                wait.until(EC.url_contains("/console/liquid"))
+            except TimeoutException:
+                pass
+            wait_overlay_gone(driver, 15)
+            time.sleep(0.5)
+            if self._is_liquids_page():
+                return True
+
+        return False
+
 
 _SESSION: Optional[CrmSession] = None
 
@@ -209,4 +247,3 @@ def get_crm_session() -> CrmSession:
     if _SESSION is None:
         _SESSION = CrmSession()
     return _SESSION
-

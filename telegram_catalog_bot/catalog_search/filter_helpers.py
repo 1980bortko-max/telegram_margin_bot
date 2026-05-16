@@ -21,12 +21,18 @@ SELECTORS: Dict[str, Any] = {
             "//main | //div[contains(@class,'q-page')]"
         ),
         "liquids_sidebar": [
-            "//aside//*[contains(normalize-space(),'Рідини')]",
-            "//div[contains(@class,'q-drawer')]//*[contains(normalize-space(),'Рідини')]",
-            "//nav//*[contains(normalize-space(),'Рідини')]",
-            "//*[contains(@class,'q-item')][contains(normalize-space(),'Рідини')]",
+            "//aside//*[contains(normalize-space(),'Рідини') or contains(normalize-space(),'Liquids')]",
+            (
+                "//div[contains(@class,'q-drawer')]//*[contains(normalize-space(),'Рідини') "
+                "or contains(normalize-space(),'Liquids')]"
+            ),
+            "//nav//*[contains(normalize-space(),'Рідини') or contains(normalize-space(),'Liquids')]",
             "//a[contains(@href,'/console/liquid')]",
         ],
+        "liquids_tab": (
+            "//*[contains(@class,'q-tab') or contains(@class,'q-router-link') or contains(@class,'q-item')]"
+            "[contains(normalize-space(),'Рідини') or contains(normalize-space(),'Liquids')]"
+        ),
     },
     "login": {
         "af_ids_button": "//button[.//div[contains(text(),'AF IDS')] or contains(.,'AF IDS')]",
@@ -37,8 +43,14 @@ SELECTORS: Dict[str, Any] = {
     },
     "liquids": {
         "search_button": (
-            "//button[contains(.,'Пошук') or contains(.,'Search')] | "
-            "//*[contains(@class,'q-btn')][contains(.,'Пошук') or contains(.,'Search')]"
+            ".//button[contains(.,'Пошук') or contains(.,'Search')] | "
+            ".//*[contains(@class,'q-btn')][contains(.,'Пошук') or contains(.,'Search')]"
+        ),
+        "filter_panel": (
+            "//*[.//*[contains(normalize-space(),'Фільтри') or contains(normalize-space(),'Filters') "
+            "or contains(normalize-space(),'FILTER')]][.//input]"
+            "[contains(@class,'q-card') or contains(@class,'q-page') or contains(@class,'q-pa') "
+            "or contains(@class,'q-layout') or contains(@class,'q-tab-panel') or self::div]"
         ),
         "results_area": (
             "//table | //div[contains(@class,'q-table')] | "
@@ -127,6 +139,12 @@ def wait_results_loaded(driver, timeout: int = 30) -> None:
     )
     time.sleep(0.5)
     wait_overlay_gone(driver, 10)
+
+
+def require_liquids_page(driver) -> None:
+    current_url = driver.current_url or ""
+    if "/console/liquid" not in current_url:
+        raise RuntimeError(f"Очікувалась сторінка Рідини, але зараз відкрито: {current_url}")
 
 
 def safe_click(driver, el) -> bool:
@@ -237,20 +255,33 @@ def _candidate_input_xpath(labels: Iterable[str], placeholders: Iterable[str]) -
         placeholder_checks.append(f"contains(@placeholder,{literal})")
 
     checks = label_checks + placeholder_checks
-    direct = "//input[" + " or ".join(checks) + "]"
+    direct = ".//input[" + " or ".join(checks) + "]"
 
     field_checks = []
     for label in labels:
         literal = xpath_literal(label)
         field_checks.append(f".//*[normalize-space()={literal} or contains(normalize-space(),{literal})]")
     via_field = (
-        "//*[contains(@class,'q-field') or contains(@class,'q-select') or contains(@class,'q-input')]"
+        ".//*[contains(@class,'q-field') or contains(@class,'q-select') or contains(@class,'q-input')]"
         "[" + " or ".join(field_checks) + "]//input"
     )
     return f"({direct}) | ({via_field})"
 
 
+def find_liquids_filter_panel(driver):
+    panels = driver.find_elements(By.XPATH, SELECTORS["liquids"]["filter_panel"])
+    visible_panels = [panel for panel in panels if panel.is_displayed()]
+    if not visible_panels:
+        raise RuntimeError("Не знайшов блок фільтрів на сторінці Рідини")
+
+    # Prefer the smallest visible block that still contains all filters. This avoids
+    # accidentally using the global header search or another open tab.
+    visible_panels.sort(key=lambda panel: panel.size.get("height", 999999) * panel.size.get("width", 999999))
+    return visible_panels[0]
+
+
 def find_filter_input(driver, filter_name: str, timeout: int = 10):
+    require_liquids_page(driver)
     config = SELECTORS["liquids"]["filters"][filter_name]
     xpath = _candidate_input_xpath(config.get("labels", []), config.get("placeholders", []))
     end_at = time.time() + timeout
@@ -258,7 +289,8 @@ def find_filter_input(driver, filter_name: str, timeout: int = 10):
 
     while time.time() < end_at:
         try:
-            inputs = driver.find_elements(By.XPATH, xpath)
+            panel = find_liquids_filter_panel(driver)
+            inputs = panel.find_elements(By.XPATH, xpath)
             visible = [inp for inp in inputs if inp.is_displayed()]
             if visible:
                 return visible[0]

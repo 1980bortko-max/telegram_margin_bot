@@ -96,7 +96,7 @@ def product_from_table_cells(headers: List[str], cells: List[str]) -> CatalogPro
     name = by_header("name", "назва", "опис", "description") or first_non_empty(cells)
     brand = by_header("brand", "бренд")
     price = by_header("price", "ціна", "цена") or first_match(PRICE_RE, joined)
-    availability = by_header("availability", "наяв", "stock", "qty", "залиш")
+    availability = by_header("availability", "наяв", "доступ", "stock", "qty", "залиш")
     warehouse = by_header("warehouse", "склад") or first_match(WAREHOUSE_RE, joined)
     delivery = by_header("delivery", "достав") or first_match(DELIVERY_RE, joined)
 

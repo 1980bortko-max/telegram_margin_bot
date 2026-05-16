@@ -3,14 +3,13 @@
 from dataclasses import dataclass
 from typing import Dict, List
 
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support import expected_conditions as EC
-
 from config import CATALOG_SEARCH_LIMIT
 from .crm_session import get_crm_session
 from .filter_helpers import (
     SELECTORS,
     debug_log,
+    find_liquids_filter_panel,
+    require_liquids_page,
     safe_click,
     save_debug_screenshot,
     set_filter_value,
@@ -65,17 +64,16 @@ def search_liquids(filters: LiquidsFilters, limit: int = CATALOG_SEARCH_LIMIT) -
 
     with session.lock:
         driver = session.driver
-        wait = session.wait
 
         debug_log(f"Liquids search start: {filters.active_values()}", session.debug_dir)
         session.open_liquids_from_sidebar()
+        require_liquids_page(driver)
         save_debug_screenshot(driver, session.debug_dir, "liquids_before_filters")
 
         apply_liquids_filters(filters)
 
-        search_button = wait.until(
-            EC.element_to_be_clickable((By.XPATH, SELECTORS["liquids"]["search_button"]))
-        )
+        filter_panel = find_liquids_filter_panel(driver)
+        search_button = filter_panel.find_element(By.XPATH, SELECTORS["liquids"]["search_button"])
         if not safe_click(driver, search_button):
             raise RuntimeError("Не вдалося натиснути кнопку Пошук")
 
@@ -138,4 +136,3 @@ def format_product(product: CatalogProduct) -> str:
     lines.append("")
     lines.append("--------------------")
     return "\n".join(lines)
-
