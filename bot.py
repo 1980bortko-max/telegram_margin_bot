@@ -121,6 +121,18 @@ LIQUIDS_SEARCH_TITLES = {
     "article": "Номер / артикул",
 }
 
+LIQUID_TYPE_OPTIONS = [
+    "ENGINE OIL",
+    "HYDRAULIC FLUIDS",
+    "BREAK FLUIDS",
+    "TRANSMISSION OIL",
+    "ANTIFREEZE",
+    "AXLE GEAR OIL",
+    "LUBRICATION",
+    "COMPRESSOR OIL",
+    "HYDRAULIC OIL",
+]
+
 
 after_result_keyboard_user = ReplyKeyboardMarkup(
     keyboard=[
@@ -185,6 +197,17 @@ access_action_keyboard = ReplyKeyboardMarkup(
 
 skip_filter_keyboard = ReplyKeyboardMarkup(
     keyboard=[
+        [KeyboardButton(text="⏭ Пропустити")],
+        [KeyboardButton(text="🔙 Головне меню")],
+    ],
+    resize_keyboard=True
+)
+
+liquid_type_keyboard = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text=item)]
+        for item in LIQUID_TYPE_OPTIONS
+    ] + [
         [KeyboardButton(text="⏭ Пропустити")],
         [KeyboardButton(text="🔙 Головне меню")],
     ],
@@ -1132,6 +1155,20 @@ def is_skip_filter_answer(text: str) -> bool:
     return text in ("⏭ пропустити", "пропустити", "skip", "-")
 
 
+def get_liquids_filter_keyboard(field: str):
+    if field == "liquid_type":
+        return liquid_type_keyboard
+    return skip_filter_keyboard
+
+
+def normalize_liquid_type(value: str) -> Optional[str]:
+    value_norm = norm_cmd(value)
+    for option in LIQUID_TYPE_OPTIONS:
+        if norm_cmd(option) == value_norm:
+            return option
+    return None
+
+
 async def start_liquids_search(message: types.Message):
     user_state[message.from_user.id] = {
         "step": "catalog_liquids_filter",
@@ -1151,10 +1188,14 @@ async def ask_liquids_filter(message: types.Message):
         return
 
     field = LIQUIDS_SEARCH_FIELDS[index]
+    prompt = "Оберіть значення кнопкою або натисніть «⏭ Пропустити»."
+    if field != "liquid_type":
+        prompt = "Введи значення або натисни «⏭ Пропустити»."
+
     await message.answer(
         f"🔎 Пошук рідин\n\n{LIQUIDS_SEARCH_TITLES[field]}:\n"
-        "Введи значення або натисни «⏭ Пропустити».",
-        reply_markup=skip_filter_keyboard
+        f"{prompt}",
+        reply_markup=get_liquids_filter_keyboard(field)
     )
 
 
@@ -1169,6 +1210,16 @@ async def handle_liquids_filter_answer(message: types.Message, raw_text: str, te
 
     field = LIQUIDS_SEARCH_FIELDS[index]
     value = "" if is_skip_filter_answer(text) else normalize_text(raw_text)
+
+    if field == "liquid_type" and value:
+        selected_type = normalize_liquid_type(value)
+        if not selected_type:
+            await message.answer(
+                "❌ Оберіть тип кнопкою зі списку або натисніть «⏭ Пропустити».",
+                reply_markup=liquid_type_keyboard
+            )
+            return
+        value = selected_type
 
     state.setdefault("answers", {})[field] = value
     state["field_index"] = index + 1
