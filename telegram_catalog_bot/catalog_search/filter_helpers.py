@@ -46,6 +46,11 @@ SELECTORS: Dict[str, Any] = {
             ".//button[contains(.,'Пошук') or contains(.,'Search')] | "
             ".//*[contains(@class,'q-btn')][contains(.,'Пошук') or contains(.,'Search')]"
         ),
+        "search_button_global": (
+            "//button[contains(normalize-space(.),'Пошук') or contains(normalize-space(.),'Search')] | "
+            "//*[contains(@class,'q-btn')]"
+            "[contains(normalize-space(.),'Пошук') or contains(normalize-space(.),'Search')]"
+        ),
         "filter_panel": (
             "//*[.//*[contains(normalize-space(),'Фільтри') or contains(normalize-space(),'Filters') "
             "or contains(normalize-space(),'FILTER')]][.//input]"
@@ -220,16 +225,26 @@ def quasar_set_value(driver, inp, value: str, timeout: float = 2.0) -> None:
     quasar_clear_input(driver, inp)
 
     field = None
+    is_select = False
     try:
         field = driver.execute_script(
             "return arguments[0].closest('.q-field, .q-select, .q-input') || arguments[0];",
             inp,
+        )
+        is_select = bool(
+            driver.execute_script(
+                "return !!arguments[0].closest('.q-select');",
+                inp,
+            )
         )
     except Exception:
         field = inp
 
     try:
         safe_click(driver, field or inp)
+        time.sleep(0.25)
+        if click_matching_quasar_option(driver, value):
+            return
         driver.execute_script(
             """
             const el = arguments[0];
@@ -246,6 +261,9 @@ def quasar_set_value(driver, inp, value: str, timeout: float = 2.0) -> None:
         inp.send_keys(Keys.TAB)
     except Exception:
         pass
+
+    if is_select:
+        raise RuntimeError(f"Не вдалося вибрати значення зі списку: {value}")
 
     driver.execute_script(
         """
@@ -360,6 +378,45 @@ def click_matching_quasar_option(driver, value: str) -> bool:
     if not value_norm:
         return False
 
+    js_clicked = driver.execute_script(
+        """
+        const target = arguments[0];
+        const norm = (value) => String(value || '')
+            .replace(/[–—]/g, '-')
+            .trim()
+            .replace(/\\s+/g, ' ')
+            .toLowerCase();
+        const visible = (el) => {
+            const rect = el.getBoundingClientRect();
+            const style = window.getComputedStyle(el);
+            return rect.width > 0 && rect.height > 0 &&
+                style.display !== 'none' && style.visibility !== 'hidden';
+        };
+        const candidates = Array.from(document.querySelectorAll(
+            '.q-menu .q-item, .q-menu [role="option"], ' +
+            '.q-virtual-scroll__content .q-item, [role="listbox"] .q-item, ' +
+            '.q-item[role="option"]'
+        )).filter((el) => visible(el) && norm(el.innerText || el.textContent) === target);
+        if (!candidates.length) {
+            return false;
+        }
+        const el = candidates[0];
+        el.scrollIntoView({ block: 'center' });
+        for (const eventName of ['mousedown', 'mouseup', 'click']) {
+            el.dispatchEvent(new MouseEvent(eventName, {
+                bubbles: true,
+                cancelable: true,
+                view: window
+            }));
+        }
+        return true;
+        """,
+        value_norm,
+    )
+    if js_clicked:
+        time.sleep(0.25)
+        return True
+
     option_css = (
         ".q-menu .q-item, "
         ".q-menu [role='option'], "
@@ -381,6 +438,23 @@ def click_matching_quasar_option(driver, value: str) -> bool:
         time.sleep(0.1)
 
     return False
+
+
+def find_liquids_search_button(driver, timeout: int = 10):
+    require_liquids_page(driver)
+    end_at = time.time() + timeout
+
+    while time.time() < end_at:
+        try:
+            buttons = driver.find_elements(By.XPATH, SELECTORS["liquids"]["search_button_global"])
+            visible = [button for button in buttons if button.is_displayed()]
+            if visible:
+                return visible[0]
+        except Exception:
+            pass
+        time.sleep(0.2)
+
+    raise RuntimeError("Не знайшов кнопку Пошук на сторінці Рідини")
 
 
 def set_filter_value(driver, filter_name: str, value: str) -> None:
