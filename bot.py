@@ -133,6 +133,49 @@ LIQUID_TYPE_OPTIONS = [
     "HYDRAULIC OIL",
 ]
 
+VISCOSITY_OPTIONS = [
+    "20W-40",
+    "0W-40",
+    "SAE 30",
+    "80W-90",
+    "ATF III",
+    "VG 22",
+    "VG 68",
+    "20W-20",
+    "80W-140",
+    "25W-40",
+    "15W-40",
+    "10W",
+    "AZF 5",
+    "SAE 90",
+    "5W-50",
+    "70W",
+    "DCT",
+    "VG 220",
+    "DEXRON III G",
+    "DCTF-II",
+    "ATF",
+    "0W-15",
+    "ATF 8HP",
+    "VG 150",
+    "70W-80",
+    "5W-16",
+    "10W-40",
+    "DEXRON VI",
+    "0W-50",
+    "SAE 97",
+    "0W-30",
+    "DCTF-I",
+    "DEXRON II",
+    "0W-16",
+    "SAE 50",
+    "VG 100",
+    "15W-50",
+    "0W-20",
+    "10W-50",
+    "75W-80",
+]
+
 
 after_result_keyboard_user = ReplyKeyboardMarkup(
     keyboard=[
@@ -207,6 +250,17 @@ liquid_type_keyboard = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text=item)]
         for item in LIQUID_TYPE_OPTIONS
+    ] + [
+        [KeyboardButton(text="⏭ Пропустити")],
+        [KeyboardButton(text="🔙 Головне меню")],
+    ],
+    resize_keyboard=True
+)
+
+viscosity_keyboard = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text=item) for item in VISCOSITY_OPTIONS[index:index + 2]]
+        for index in range(0, len(VISCOSITY_OPTIONS), 2)
     ] + [
         [KeyboardButton(text="⏭ Пропустити")],
         [KeyboardButton(text="🔙 Головне меню")],
@@ -1158,12 +1212,22 @@ def is_skip_filter_answer(text: str) -> bool:
 def get_liquids_filter_keyboard(field: str):
     if field == "liquid_type":
         return liquid_type_keyboard
+    if field == "viscosity":
+        return viscosity_keyboard
     return skip_filter_keyboard
 
 
 def normalize_liquid_type(value: str) -> Optional[str]:
     value_norm = norm_cmd(value)
     for option in LIQUID_TYPE_OPTIONS:
+        if norm_cmd(option) == value_norm:
+            return option
+    return None
+
+
+def normalize_viscosity(value: str) -> Optional[str]:
+    value_norm = norm_cmd(value)
+    for option in VISCOSITY_OPTIONS:
         if norm_cmd(option) == value_norm:
             return option
     return None
@@ -1189,7 +1253,7 @@ async def ask_liquids_filter(message: types.Message):
 
     field = LIQUIDS_SEARCH_FIELDS[index]
     prompt = "Оберіть значення кнопкою або натисніть «⏭ Пропустити»."
-    if field != "liquid_type":
+    if field not in ("liquid_type", "viscosity"):
         prompt = "Введи значення або натисни «⏭ Пропустити»."
 
     await message.answer(
@@ -1220,6 +1284,16 @@ async def handle_liquids_filter_answer(message: types.Message, raw_text: str, te
             )
             return
         value = selected_type
+
+    if field == "viscosity" and value:
+        selected_viscosity = normalize_viscosity(value)
+        if not selected_viscosity:
+            await message.answer(
+                "❌ Оберіть в’язкість кнопкою зі списку або натисніть «⏭ Пропустити».",
+                reply_markup=viscosity_keyboard
+            )
+            return
+        value = selected_viscosity
 
     state.setdefault("answers", {})[field] = value
     state["field_index"] = index + 1
