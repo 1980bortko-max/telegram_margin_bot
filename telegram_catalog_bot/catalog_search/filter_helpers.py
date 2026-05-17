@@ -427,6 +427,7 @@ def _candidate_input_xpath(labels: Iterable[str], placeholders: Iterable[str]) -
     for label in labels:
         literal = xpath_literal(label)
         label_checks.append(f"@aria-label={literal}")
+        label_checks.append(f"@label={literal}")
 
     placeholder_checks = []
     for placeholder in placeholders:
@@ -513,6 +514,7 @@ def find_article_field(driver, timeout: int = 10):
                         label && label.innerText,
                         input.placeholder,
                         input.getAttribute('aria-label'),
+                        input.getAttribute('label'),
                         input.getAttribute('name'),
                         field.innerText || field.textContent,
                         prefix && prefix.innerText,
