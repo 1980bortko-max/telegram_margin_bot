@@ -114,7 +114,9 @@ def format_products_for_telegram(products: List[CatalogProduct]) -> List[str]:
 
 def format_product(product: CatalogProduct) -> str:
     title_parts = []
-    if product.brand:
+    name_lower = product.name.lower()
+    brand_lower = product.brand.lower()
+    if product.brand and (not name_lower or not name_lower.startswith(brand_lower)):
         title_parts.append(product.brand)
     if product.article:
         title_parts.append(product.article)

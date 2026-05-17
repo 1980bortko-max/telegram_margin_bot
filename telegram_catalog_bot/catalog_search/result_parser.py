@@ -3,6 +3,7 @@
 import re
 from dataclasses import dataclass
 from typing import Dict, List
+from urllib.parse import unquote, urlparse
 
 from selenium.webdriver.common.by import By
 
@@ -36,10 +37,15 @@ ARTICLE_RE = re.compile(r"\b(?=[A-ZА-Я0-9._/-]*\d)[A-ZА-Я0-9][A-ZА-Я0-9._/
 WAREHOUSE_RE = re.compile(r"\bAF\d+\b|\b[A-Z]{1,4}\d{1,4}\b")
 DELIVERY_RE = re.compile(r"\b\d+\s*(?:день|дні|днів|day|days)\b", re.IGNORECASE)
 AVAILABILITY_RE = re.compile(r"(?:наявність|stock|qty|залишок)\D{0,20}(\d+)", re.IGNORECASE)
+ICON_WORD_RE = re.compile(r"\b(?:event|access_time|star|shopping_cart|sync|info|content_copy)\b", re.IGNORECASE)
 
 
 def clean_text(value: str) -> str:
     return re.sub(r"\s+", " ", value or "").strip()
+
+
+def clean_icon_text(value: str) -> str:
+    return clean_text(ICON_WORD_RE.sub(" ", value or ""))
 
 
 def parse_products(driver, limit: int = 20) -> List[CatalogProduct]:
@@ -67,11 +73,12 @@ def parse_table_products(driver, limit: int = 20) -> List[CatalogProduct]:
             if not row.is_displayed():
                 continue
 
-            cells = [clean_text(td.text) for td in row.find_elements(By.XPATH, ".//td")]
+            cell_elements = row.find_elements(By.XPATH, ".//td")
+            cells = [cell_text_with_inputs(td) for td in cell_elements]
             if not cells or not any(cells):
                 continue
 
-            product = product_from_table_cells(headers, cells)
+            product = product_from_table_cells(headers, cells, cell_elements)
             product.url = extract_row_url(row)
             if product.article or product.name or product.price:
                 products.append(product)
@@ -82,23 +89,34 @@ def parse_table_products(driver, limit: int = 20) -> List[CatalogProduct]:
     return products
 
 
-def product_from_table_cells(headers: List[str], cells: List[str]) -> CatalogProduct:
+def product_from_table_cells(headers: List[str], cells: List[str], cell_elements=None) -> CatalogProduct:
     def by_header(*needles: str) -> str:
-        for index, header in enumerate(headers):
-            if index >= len(cells):
-                continue
-            if any(needle in header for needle in needles):
-                return cells[index]
-        return ""
+        index = header_index(headers, *needles)
+        if index is None or index >= len(cells):
+            return ""
+        return cells[index]
 
     joined = "\n".join(cells)
-    article = by_header("article", "артикул", "номер") or first_match(ARTICLE_RE, joined)
-    name = by_header("name", "назва", "опис", "description") or first_non_empty(cells)
-    brand = by_header("brand", "бренд")
+    article_raw = by_header("article", "артикул", "номер")
+    article, name = article_and_name_from_text(article_raw)
+    if not article:
+        article = first_match(ARTICLE_RE, joined)
+    if not name:
+        name = clean_product_name(by_header("name", "назва", "опис", "description"), article)
+    if not name:
+        name = clean_product_name(first_non_empty(cells), article)
+
+    brand_index = header_index(headers, "brand", "бренд")
+    brand = clean_brand_text(by_header("brand", "бренд"))
+    if not brand and brand_index is not None and cell_elements and brand_index < len(cell_elements):
+        brand = extract_brand_from_cell(cell_elements[brand_index])
+    if not brand:
+        brand = infer_brand_from_name(name)
+
     price = by_header("price", "ціна", "цена") or first_match(PRICE_RE, joined)
-    availability = by_header("availability", "наяв", "доступ", "stock", "qty", "залиш")
-    warehouse = by_header("warehouse", "склад") or first_match(WAREHOUSE_RE, joined)
-    delivery = by_header("delivery", "достав") or first_match(DELIVERY_RE, joined)
+    availability = clean_availability(by_header("available", "availability", "наяв", "доступ", "stock", "qty", "залиш"))
+    warehouse = by_header("warehouse", "склад")
+    delivery = clean_delivery(by_header("delivery", "достав"))
 
     return CatalogProduct(
         article=article,
@@ -109,6 +127,115 @@ def product_from_table_cells(headers: List[str], cells: List[str]) -> CatalogPro
         warehouse=warehouse,
         delivery=delivery,
     )
+
+
+def header_index(headers: List[str], *needles: str):
+    for index, header in enumerate(headers):
+        if any(needle in header for needle in needles):
+            return index
+    return None
+
+
+def cell_text_with_inputs(cell) -> str:
+    parts = []
+    try:
+        for inp in cell.find_elements(By.XPATH, ".//input"):
+            value = clean_text(inp.get_attribute("value") or "")
+            if value:
+                parts.append(value)
+    except Exception:
+        pass
+
+    text = clean_text(cell.text or "")
+    if text:
+        parts.append(text)
+
+    cleaned = []
+    for part in parts:
+        if part not in cleaned:
+            cleaned.append(part)
+    return clean_text(" ".join(cleaned))
+
+
+def article_and_name_from_text(value: str):
+    text = clean_icon_text(value)
+    article = first_match(ARTICLE_RE, text)
+    name = clean_product_name(text, article)
+    return article, name
+
+
+def clean_product_name(value: str, article: str = "") -> str:
+    text = clean_icon_text(value)
+    if article:
+        text = clean_text(text.replace(article, " ", 1))
+    text = re.sub(r"^\d+\s+[A-Z0-9]{1,4}\b", " ", text)
+    return clean_text(text)
+
+
+def clean_brand_text(value: str) -> str:
+    text = re.sub(r"\bstar\b", " ", value or "", flags=re.IGNORECASE)
+    text = clean_text(text)
+    if not text or not re.search(r"[A-Za-zА-Яа-я]", text):
+        return ""
+    return text
+
+
+def extract_brand_from_cell(cell) -> str:
+    try:
+        for image in cell.find_elements(By.XPATH, ".//img"):
+            for attr in ("alt", "title", "aria-label"):
+                brand = clean_brand_text(image.get_attribute(attr) or "")
+                if brand:
+                    return brand
+
+            src_brand = brand_from_url(image.get_attribute("src") or "")
+            if src_brand:
+                return src_brand
+    except Exception:
+        pass
+    return ""
+
+
+def brand_from_url(value: str) -> str:
+    if not value:
+        return ""
+    path = unquote(urlparse(value).path)
+    filename = path.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+    filename = re.sub(r"[_-]+", " ", filename)
+    filename = re.sub(r"\b(?:logo|brand|image|img)\b", " ", filename, flags=re.IGNORECASE)
+    filename = clean_brand_text(filename)
+    if 2 <= len(filename) <= 40 and not re.fullmatch(r"[0-9a-f]{8,}", filename, flags=re.IGNORECASE):
+        return filename.upper()
+    return ""
+
+
+def infer_brand_from_name(value: str) -> str:
+    text = clean_text(value)
+    if not text:
+        return ""
+    first = text.split(" ", 1)[0]
+    if re.search(r"[A-Za-zА-Яа-я]", first):
+        return clean_brand_text(first)
+    return ""
+
+
+def clean_availability(value: str) -> str:
+    text = clean_icon_text(value)
+    match = re.search(r"\b(\d+)\s*(?:of|з|із)\s*(\d+)\b", text, re.IGNORECASE)
+    if match:
+        return f"{match.group(1)} of {match.group(2)}"
+    match = re.search(r"\b\d+\b", text)
+    if match:
+        return match.group(0)
+    return ""
+
+
+def clean_delivery(value: str) -> str:
+    text = clean_icon_text(value)
+    match = re.search(r"\b(\d+)\s+(\d{1,2}:\d{2})\b", text)
+    if match:
+        return f"{match.group(1)} {match.group(2)}"
+    return text
 
 
 def parse_card_products(driver, limit: int = 20) -> List[CatalogProduct]:
