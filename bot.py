@@ -26,6 +26,11 @@ from telegram_catalog_bot.catalog_search.liquids_search import (
     format_products_for_telegram,
     search_liquids,
 )
+from telegram_catalog_bot.catalog_search.crm_session import reset_crm_session
+from telegram_catalog_bot.catalog_search.runtime_settings import (
+    is_catalog_search_headless,
+    set_catalog_search_headless,
+)
 
 
 bot = Bot(token=TOKEN)
@@ -221,6 +226,15 @@ admin_requests_keyboard = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="✅ Додати менеджера")],
         [KeyboardButton(text="⏭ Наступна заявка")],
+        [KeyboardButton(text="🔙 Головне меню")],
+    ],
+    resize_keyboard=True
+)
+
+crm_mode_keyboard = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="🌙 Фоновий режим CRM")],
+        [KeyboardButton(text="👁 Видимий режим CRM")],
         [KeyboardButton(text="🔙 Головне меню")],
     ],
     resize_keyboard=True
@@ -635,6 +649,7 @@ def get_main_keyboard(user_id: int):
 
     if is_admin(user_id):
         keyboard.append([KeyboardButton(text="👤 Нові заявки")])
+        keyboard.append([KeyboardButton(text="🖥 Режим CRM")])
         keyboard.append([KeyboardButton(text="⚙️ Доступ до індивідуальної націнки")])
         keyboard.append([KeyboardButton(text="🎟 Доступ до промокодів")])
 
@@ -1431,6 +1446,28 @@ async def run_liquids_search(message: types.Message):
     user_state.pop(user_id, None)
 
 
+async def show_crm_mode_settings(message: types.Message):
+    mode = "фоновий" if is_catalog_search_headless() else "видимий"
+    await message.answer(
+        f"Поточний режим CRM: {mode}\n\n"
+        "Фоновий режим — Chrome не відкривається на екрані.\n"
+        "Видимий режим — Chrome відкривається, як зараз.",
+        reply_markup=crm_mode_keyboard
+    )
+
+
+async def set_crm_mode(message: types.Message, headless: bool):
+    set_catalog_search_headless(headless)
+    reset_crm_session()
+
+    mode = "фоновий" if headless else "видимий"
+    await message.answer(
+        f"✅ Режим CRM змінено: {mode}.\n"
+        "Поточну CRM-сесію закрито. Наступний пошук запуститься вже в цьому режимі.",
+        reply_markup=get_main_keyboard(message.from_user.id)
+    )
+
+
 async def show_calc_client_groups_page(message: types.Message, page: int):
     catalogs = load_catalogs()
     client_groups = catalogs.get("calc_client_groups", [])
@@ -2011,6 +2048,27 @@ async def handle_message(message: types.Message):
             await message.answer("❌ Немає доступу", reply_markup=get_main_keyboard(user_id))
             return
         await start_promo(message)
+        return
+
+    if text == "🖥 режим crm":
+        if not is_admin(user_id):
+            await message.answer("❌ Ця дія доступна лише адміну.", reply_markup=get_main_keyboard(user_id))
+            return
+        await show_crm_mode_settings(message)
+        return
+
+    if text == "🌙 фоновий режим crm":
+        if not is_admin(user_id):
+            await message.answer("❌ Ця дія доступна лише адміну.", reply_markup=get_main_keyboard(user_id))
+            return
+        await set_crm_mode(message, headless=True)
+        return
+
+    if text == "👁 видимий режим crm":
+        if not is_admin(user_id):
+            await message.answer("❌ Ця дія доступна лише адміну.", reply_markup=get_main_keyboard(user_id))
+            return
+        await set_crm_mode(message, headless=False)
         return
 
     if "доступ до індивідуальної націнки" in text:

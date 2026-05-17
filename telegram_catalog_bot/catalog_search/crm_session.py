@@ -20,7 +20,6 @@ from config import (
     AUTOFUN_BASE_URL,
     CATALOG_CHROME_PROFILE_DIR,
     CATALOG_DEBUG_DIR,
-    CATALOG_SEARCH_HEADLESS,
     CHROME_BIN,
     CHROMEDRIVER_PATH,
 )
@@ -34,6 +33,7 @@ from .filter_helpers import (
     select_searchable_quasar_option,
     wait_overlay_gone,
 )
+from .runtime_settings import is_catalog_search_headless
 
 
 class CrmSession:
@@ -63,7 +63,7 @@ class CrmSession:
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--start-maximized")
 
-        if CATALOG_SEARCH_HEADLESS:
+        if is_catalog_search_headless():
             options.add_argument("--headless=new")
 
         profile_dir = Path(CATALOG_CHROME_PROFILE_DIR).expanduser()
@@ -268,3 +268,14 @@ def get_crm_session() -> CrmSession:
     if _SESSION is None:
         _SESSION = CrmSession()
     return _SESSION
+
+
+def reset_crm_session() -> None:
+    global _SESSION
+    session = _SESSION
+    if session is None:
+        return
+
+    with session.lock:
+        session.close()
+    _SESSION = None
