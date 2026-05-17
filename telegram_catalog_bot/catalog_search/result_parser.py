@@ -13,6 +13,11 @@ class CatalogProduct:
     article: str = ""
     name: str = ""
     brand: str = ""
+    liquid_type: str = ""
+    specifications: str = ""
+    viscosity: str = ""
+    capacity: str = ""
+    cost: str = ""
     price: str = ""
     availability: str = ""
     warehouse: str = ""
@@ -24,6 +29,11 @@ class CatalogProduct:
             "article": self.article,
             "name": self.name,
             "brand": self.brand,
+            "liquid_type": self.liquid_type,
+            "specifications": self.specifications,
+            "viscosity": self.viscosity,
+            "capacity": self.capacity,
+            "cost": self.cost,
             "price": self.price,
             "availability": self.availability,
             "warehouse": self.warehouse,
@@ -75,6 +85,7 @@ def parse_table_products(driver, limit: int = 20) -> List[CatalogProduct]:
 
             cell_elements = row.find_elements(By.XPATH, ".//td")
             cells = [cell_text_with_inputs(td) for td in cell_elements]
+            cells, cell_elements = align_cells_to_headers(headers, cells, cell_elements)
             if not cells or not any(cells):
                 continue
 
@@ -96,35 +107,42 @@ def product_from_table_cells(headers: List[str], cells: List[str], cell_elements
             return ""
         return cells[index]
 
-    joined = "\n".join(cells)
     article_raw = by_header("article", "артикул", "номер")
-    article, name = article_and_name_from_text(article_raw)
-    if not article:
-        article = first_match(ARTICLE_RE, joined)
-    if not name:
-        name = clean_product_name(by_header("name", "назва", "опис", "description"), article)
-    if not name:
-        name = clean_product_name(first_non_empty(cells), article)
+    name_raw = by_header("name", "назва", "опис", "description")
 
     brand_index = header_index(headers, "brand", "бренд")
-    brand = clean_brand_text(by_header("brand", "бренд"))
-    if not brand and brand_index is not None and cell_elements and brand_index < len(cell_elements):
+    brand = ""
+    if brand_index is not None and cell_elements and brand_index < len(cell_elements):
         brand = extract_brand_from_cell(cell_elements[brand_index])
     if not brand:
-        brand = infer_brand_from_name(name)
+        brand = clean_brand_text(by_header("brand", "бренд"))
+    if not brand:
+        brand = infer_brand_from_name(article_raw or name_raw)
 
+    article = clean_article_title(article_raw, brand)
+    name = clean_article_title(name_raw, brand)
+
+    liquid_type = clean_icon_text(by_header("type", "тип"))
+    specifications = clean_icon_text(by_header("specifications", "специф", "склад"))
+    viscosity = clean_icon_text(by_header("viscosity", "в'яз", "вязк"))
+    capacity = clean_icon_text(by_header("capacity", "об'єм", "обʼєм", "volume"))
+    cost = by_header("cost", "собіварт", "закуп")
+    joined = "\n".join(cells)
     price = by_header("price", "ціна", "цена") or first_match(PRICE_RE, joined)
     availability = clean_availability(by_header("available", "availability", "наяв", "доступ", "stock", "qty", "залиш"))
-    warehouse = by_header("warehouse", "склад")
     delivery = clean_delivery(by_header("delivery", "достав"))
 
     return CatalogProduct(
         article=article,
         name=name,
         brand=brand,
+        liquid_type=liquid_type,
+        specifications=specifications,
+        viscosity=viscosity,
+        capacity=capacity,
+        cost=cost,
         price=price,
         availability=availability,
-        warehouse=warehouse,
         delivery=delivery,
     )
 
@@ -134,6 +152,19 @@ def header_index(headers: List[str], *needles: str):
         if any(needle in header for needle in needles):
             return index
     return None
+
+
+def align_cells_to_headers(headers: List[str], cells: List[str], cell_elements):
+    if len(cells) == len(headers) + 1 and headers:
+        first_header = headers[0]
+        if not any(word in first_header for word in ("image", "зображ", "фото")):
+            try:
+                first_has_image = bool(cell_elements[0].find_elements(By.XPATH, ".//img"))
+            except Exception:
+                first_has_image = False
+            if first_has_image:
+                return cells[1:], cell_elements[1:]
+    return cells, cell_elements
 
 
 def cell_text_with_inputs(cell) -> str:
@@ -168,13 +199,30 @@ def clean_product_name(value: str, article: str = "") -> str:
     text = clean_icon_text(value)
     if article:
         text = clean_text(text.replace(article, " ", 1))
-    text = re.sub(r"^\d+\s+[A-Z0-9]{1,4}\b", " ", text)
     return clean_text(text)
+
+
+def clean_article_title(value: str, brand: str = "") -> str:
+    text = clean_product_name(value)
+    brand = clean_brand_text(brand)
+    if not text or not brand:
+        return text
+
+    match = re.search(rf"\b{re.escape(brand)}\b", text, flags=re.IGNORECASE)
+    if not match:
+        return text
+
+    prefix = text[:match.start()]
+    if not any(looks_like_product_code(token) for token in prefix.split()):
+        return clean_text(text[match.start():])
+    return text
 
 
 def clean_brand_text(value: str) -> str:
     text = re.sub(r"\bstar\b", " ", value or "", flags=re.IGNORECASE)
     text = clean_text(text)
+    if re.fullmatch(r"\d+(?:[.,]\d+)?\s*(?:l|л|ml|мл)", text, flags=re.IGNORECASE):
+        return ""
     if not text or not re.search(r"[A-Za-zА-Яа-я]", text):
         return ""
     return text
@@ -213,10 +261,39 @@ def infer_brand_from_name(value: str) -> str:
     text = clean_text(value)
     if not text:
         return ""
-    first = text.split(" ", 1)[0]
-    if re.search(r"[A-Za-zА-Яа-я]", first):
-        return clean_brand_text(first)
+    for token in text.split():
+        token = clean_brand_text(token)
+        if not token:
+            continue
+        if looks_like_viscosity(token) or looks_like_capacity(token) or looks_like_spec(token):
+            continue
+        if looks_like_product_code(token):
+            continue
+        if re.search(r"[A-Za-zА-Яа-я]", token):
+            return token
     return ""
+
+
+def looks_like_product_code(value: str) -> bool:
+    token = clean_text(value)
+    if looks_like_viscosity(token) or looks_like_capacity(token) or looks_like_spec(token):
+        return False
+    return bool(re.search(r"\d", token) and len(token) >= 5)
+
+
+def looks_like_viscosity(value: str) -> bool:
+    return bool(re.fullmatch(r"\d{1,2}w[- ]?\d{1,2}", value or "", flags=re.IGNORECASE))
+
+
+def looks_like_capacity(value: str) -> bool:
+    return bool(re.fullmatch(r"\d+(?:[.,]\d+)?\s*(?:l|л|ml|мл)", value or "", flags=re.IGNORECASE))
+
+
+def looks_like_spec(value: str) -> bool:
+    token = value or ""
+    if "-" in token or "/" in token:
+        return bool(re.fullmatch(r"[A-ZА-Я]{1,4}[-/]?[A-ZА-Я]?\d(?:/[A-ZА-Я]?\d)?", token, flags=re.IGNORECASE))
+    return bool(re.fullmatch(r"[AC]\d", token, flags=re.IGNORECASE))
 
 
 def clean_availability(value: str) -> str:

@@ -113,25 +113,23 @@ def format_products_for_telegram(products: List[CatalogProduct]) -> List[str]:
 
 
 def format_product(product: CatalogProduct) -> str:
-    title_parts = []
-    name_lower = product.name.lower()
-    brand_lower = product.brand.lower()
-    if product.brand and (not name_lower or not name_lower.startswith(brand_lower)):
-        title_parts.append(product.brand)
-    if product.article:
-        title_parts.append(product.article)
-    if product.name:
-        title_parts.append(product.name)
-
-    title = " ".join(title_parts).strip() or "Liquids"
+    title = product.article or product.name or "Liquids"
 
     lines = [f"🚗 {title}"]
     lines.append("")
+    if product.brand:
+        lines.append(f"🏷 Бренд: {product.brand}")
+    if product.liquid_type:
+        lines.append(f"🛢 Тип: {product.liquid_type}")
+    if product.viscosity:
+        lines.append(f"🌡 Вʼязкість: {product.viscosity}")
+    if product.capacity:
+        lines.append(f"🧴 Обʼєм: {product.capacity}")
+    if product.specifications:
+        lines.append(f"📋 Специфікації: {product.specifications}")
     lines.append(f"💶 Ціна: {product.price or 'не вказано'}")
     lines.append(f"📦 Наявність: {product.availability or 'не вказано'}")
-    lines.append(f"🏬 Склад: {product.warehouse or 'не вказано'}")
     lines.append(f"🚚 Доставка: {product.delivery or 'не вказано'}")
-    lines.append(f"🏷 Бренд: {product.brand or 'не вказано'}")
 
     if product.url:
         lines.append(f"🔗 {product.url}")
