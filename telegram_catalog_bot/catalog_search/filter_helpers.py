@@ -476,7 +476,75 @@ def find_liquids_filter_panel(driver):
     return visible_panels[0]
 
 
+def find_article_input(driver, timeout: int = 10):
+    require_liquids_page(driver)
+    end_at = time.time() + timeout
+    last_error = None
+
+    while time.time() < end_at:
+        try:
+            panel = find_liquids_filter_panel(driver)
+            inp = driver.execute_script(
+                """
+                const panel = arguments[0];
+                const norm = (value) => String(value || '')
+                    .replace(/[–—]/g, '-')
+                    .trim()
+                    .replace(/\\s+/g, ' ')
+                    .toLowerCase();
+                const visible = (el) => {
+                    if (!el) return false;
+                    const rect = el.getBoundingClientRect();
+                    const style = window.getComputedStyle(el);
+                    return rect.width > 0 && rect.height > 0 &&
+                        style.display !== 'none' && style.visibility !== 'hidden' && !el.disabled;
+                };
+                const fields = Array.from(panel.querySelectorAll('.q-field, .q-input'))
+                    .filter(visible);
+
+                for (const field of fields) {
+                    const input = field.querySelector('input');
+                    if (!visible(input) || field.closest('.q-select')) {
+                        continue;
+                    }
+
+                    const label = field.querySelector('.q-field__label');
+                    const values = [
+                        field.innerText || field.textContent,
+                        label && label.innerText,
+                        input.placeholder,
+                        input.getAttribute('aria-label'),
+                        input.id,
+                    ].map(norm).filter(Boolean);
+
+                    if (values.some((value) =>
+                        value.includes('number') ||
+                        value.includes('номер') ||
+                        value.includes('артикул')
+                    )) {
+                        return input;
+                    }
+                }
+
+                const inputs = Array.from(panel.querySelectorAll('input'))
+                    .filter((input) => visible(input) && !input.closest('.q-select'));
+                return inputs[0] || null;
+                """,
+                panel,
+            )
+            if inp and inp.is_displayed():
+                return inp
+        except Exception as exc:
+            last_error = exc
+        time.sleep(0.2)
+
+    raise RuntimeError(f"Filter input not found: article. Last error: {last_error}")
+
+
 def find_filter_input(driver, filter_name: str, timeout: int = 10):
+    if filter_name == "article":
+        return find_article_input(driver, timeout)
+
     require_liquids_page(driver)
     config = SELECTORS["liquids"]["filters"][filter_name]
     xpath = _candidate_input_xpath(config.get("labels", []), config.get("placeholders", []))
