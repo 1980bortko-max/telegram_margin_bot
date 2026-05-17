@@ -499,8 +499,48 @@ def find_article_field(driver, timeout: int = 10):
                     return rect.width > 0 && rect.height > 0 &&
                         style.display !== 'none' && style.visibility !== 'hidden' && !el.disabled;
                 };
-                const fields = Array.from(panel.querySelectorAll('.q-field, .q-input'))
+                const panelFields = Array.from(panel.querySelectorAll('.q-field, .q-input'))
                     .filter(visible);
+                const pageFields = Array.from(document.querySelectorAll('.q-field, .q-input'))
+                    .filter(visible);
+                const isNumberField = (field) => {
+                    const input = field.querySelector('input, textarea');
+                    if (!input) return false;
+
+                    const label = field.querySelector('.q-field__label');
+                    const prefix = field.querySelector('.q-field__prefix, .q-field__prepend');
+                    const values = [
+                        label && label.innerText,
+                        input.placeholder,
+                        input.getAttribute('aria-label'),
+                        input.getAttribute('name'),
+                        field.innerText || field.textContent,
+                        prefix && prefix.innerText,
+                    ].map(norm).filter(Boolean);
+
+                    return values.some((value) =>
+                        value === 'number' ||
+                        value === '# number' ||
+                        value === 'номер' ||
+                        value === '# номер' ||
+                        value === 'артикул' ||
+                        value.includes('number') ||
+                        value.includes('номер') ||
+                        value.includes('артикул')
+                    );
+                };
+
+                for (const field of panelFields) {
+                    if (isNumberField(field)) {
+                        return field;
+                    }
+                }
+
+                for (const field of pageFields) {
+                    if (isNumberField(field)) {
+                        return field;
+                    }
+                }
 
                 const searchButtons = Array.from(document.querySelectorAll('button, .q-btn'))
                     .filter(visible)
@@ -511,7 +551,7 @@ def find_article_field(driver, timeout: int = 10):
 
                 for (const button of searchButtons) {
                     const searchRect = button.getBoundingClientRect();
-                    const rowFields = fields
+                    const rowFields = pageFields
                         .filter((field) => field.querySelector('input, textarea'))
                         .filter((field) => {
                             const rect = field.getBoundingClientRect();
@@ -524,26 +564,6 @@ def find_article_field(driver, timeout: int = 10):
                         .sort((a, b) => b.getBoundingClientRect().right - a.getBoundingClientRect().right);
                     if (rowFields.length) {
                         return rowFields[0];
-                    }
-                }
-
-                for (const field of fields) {
-                    const input = field.querySelector('input, textarea');
-                    const label = field.querySelector('.q-field__label');
-                    const values = [
-                        field.innerText || field.textContent,
-                        label && label.innerText,
-                        input && input.placeholder,
-                        input && input.getAttribute('aria-label'),
-                        input && input.id,
-                    ].map(norm).filter(Boolean);
-
-                    if (values.some((value) =>
-                        value.includes('number') ||
-                        value.includes('номер') ||
-                        value.includes('артикул')
-                    )) {
-                        return field;
                     }
                 }
 
@@ -619,6 +639,22 @@ def set_article_value(driver, value: str) -> None:
 
 
 def find_article_input(driver, timeout: int = 10):
+    end_at = time.time() + timeout
+    strict_xpath = _candidate_input_xpath(
+        ["Номер", "# Номер", "Артикул", "Number", "# Number", "Article"],
+        ["Номер", "# Номер", "Артикул", "Number", "# Number", "Article"],
+    )
+
+    while time.time() < end_at:
+        try:
+            inputs = driver.find_elements(By.XPATH, strict_xpath)
+            visible = [inp for inp in inputs if inp.is_displayed() and inp.is_enabled()]
+            if visible:
+                return visible[0]
+        except Exception:
+            pass
+        time.sleep(0.1)
+
     field = find_article_field(driver, timeout)
     end_at = time.time() + timeout
 
