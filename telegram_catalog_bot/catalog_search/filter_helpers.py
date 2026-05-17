@@ -227,6 +227,93 @@ def safe_click(driver, el) -> bool:
             return False
 
 
+def is_client_group_update_popup_visible(driver) -> bool:
+    try:
+        return bool(
+            driver.execute_script(
+                """
+                const norm = (value) => String(value || '').trim().replace(/\\s+/g, ' ');
+                const visible = (el) => {
+                    const rect = el.getBoundingClientRect();
+                    const style = window.getComputedStyle(el);
+                    return rect.width > 0 && rect.height > 0 &&
+                        style.display !== 'none' && style.visibility !== 'hidden';
+                };
+                return Array.from(document.querySelectorAll(
+                    '.q-notification, .q-notifications__list .q-notification, .q-banner, .q-snackbar'
+                )).some((el) =>
+                    visible(el) &&
+                    /Client Group Changed|Update Your Data|Access New Prices/i.test(
+                        norm(el.innerText || el.textContent)
+                    )
+                );
+                """
+            )
+        )
+    except Exception:
+        return False
+
+
+def confirm_client_group_update_popup(driver, debug_dir: Optional[Path] = None, timeout: float = 8.0) -> bool:
+    end_at = time.time() + timeout
+
+    while time.time() < end_at:
+        try:
+            result = driver.execute_script(
+                """
+                const norm = (value) => String(value || '').trim().replace(/\\s+/g, ' ');
+                const visible = (el) => {
+                    const rect = el.getBoundingClientRect();
+                    const style = window.getComputedStyle(el);
+                    return rect.width > 0 && rect.height > 0 &&
+                        style.display !== 'none' && style.visibility !== 'hidden';
+                };
+                const popup = Array.from(document.querySelectorAll(
+                    '.q-notification, .q-notifications__list .q-notification, .q-banner, .q-snackbar'
+                )).find((el) =>
+                    visible(el) &&
+                    /Client Group Changed|Update Your Data|Access New Prices/i.test(
+                        norm(el.innerText || el.textContent)
+                    )
+                );
+                if (!popup) return 'missing';
+
+                const buttons = Array.from(popup.querySelectorAll('button, .q-btn, [role="button"]'));
+                const reloadButton = buttons.find((button) => {
+                    const text = norm(button.innerText || button.textContent).toLowerCase();
+                    return text.includes('neu laden') ||
+                        text.includes('reload') ||
+                        text.includes('update') ||
+                        text.includes('оновити') ||
+                        text.includes('обновить');
+                });
+                if (!reloadButton) return 'button_missing';
+
+                reloadButton.scrollIntoView({ block: 'center' });
+                for (const eventName of ['pointerdown', 'mousedown', 'mouseup', 'click']) {
+                    reloadButton.dispatchEvent(new MouseEvent(eventName, {
+                        bubbles: true,
+                        cancelable: true,
+                        view: window
+                    }));
+                }
+                return 'clicked';
+                """
+            )
+            if result == "clicked":
+                debug_log("Client group update popup confirmed with NEU LADEN", debug_dir)
+                wait_overlay_gone(driver, 20)
+                time.sleep(1.0)
+                return True
+            if result == "button_missing":
+                debug_log("Client group update popup found, but NEU LADEN button is missing", debug_dir)
+        except Exception as exc:
+            debug_log(f"Client group update popup handling error: {exc}", debug_dir)
+        time.sleep(0.2)
+
+    return False
+
+
 def clickable_ancestor(driver, el):
     try:
         return driver.execute_script(
@@ -438,6 +525,10 @@ def find_client_group_field(driver, timeout: int = 10):
                 const isClientGroup = (field) => {
                     const label = field.querySelector('.q-field__label');
                     const input = field.querySelector('input');
+                    const placeholder = norm(input && input.placeholder);
+                    if (placeholder.includes('type here to search') || placeholder.includes('що будемо')) {
+                        return false;
+                    }
                     const values = [
                         label && label.innerText,
                         input && input.placeholder,
@@ -475,6 +566,74 @@ def find_client_group_field(driver, timeout: int = 10):
         time.sleep(0.2)
 
     raise RuntimeError(f"Client group field not found. Last error: {last_error}")
+
+
+def wait_client_group_choice(driver, value: str, timeout: float = 4.0) -> bool:
+    value_norm = normalize_choice_text(value)
+    targets = [
+        normalize_choice_text(label)
+        for label in SELECTORS["shell"]["client_group_labels"]
+    ]
+    end_at = time.time() + timeout
+
+    while time.time() < end_at:
+        try:
+            found = driver.execute_script(
+                """
+                const valueNorm = arguments[0];
+                const targets = arguments[1];
+                const norm = (value) => String(value || '')
+                    .replace(/[–—]/g, '-')
+                    .trim()
+                    .replace(/\\s+/g, ' ')
+                    .toLowerCase();
+                const visible = (el) => {
+                    const rect = el.getBoundingClientRect();
+                    const style = window.getComputedStyle(el);
+                    return rect.width > 0 && rect.height > 0 &&
+                        style.display !== 'none' && style.visibility !== 'hidden';
+                };
+                const isClientGroup = (field) => {
+                    const label = field.querySelector('.q-field__label');
+                    const input = field.querySelector('input');
+                    const placeholder = norm(input && input.placeholder);
+                    if (placeholder.includes('type here to search') || placeholder.includes('що будемо')) {
+                        return false;
+                    }
+                    const values = [
+                        label && label.innerText,
+                        input && input.placeholder,
+                        input && input.getAttribute('aria-label'),
+                        field.innerText || field.textContent
+                    ].map(norm).filter(Boolean);
+
+                    return values.some((value) =>
+                        targets.some((target) =>
+                            value === target ||
+                            value.startsWith(target + ' ') ||
+                            value.includes(target)
+                        )
+                    );
+                };
+                const fields = Array.from(document.querySelectorAll('.q-header .q-field, header .q-field, ' +
+                    '.q-toolbar .q-field, .q-layout__section--marginal .q-field, ' +
+                    '.q-header .q-select, header .q-select, .q-toolbar .q-select'
+                )).filter(visible);
+
+                return fields.some((field) =>
+                    isClientGroup(field) && norm(field.innerText || field.textContent).includes(valueNorm)
+                );
+                """,
+                value_norm,
+                targets,
+            )
+            if found:
+                return True
+        except Exception:
+            pass
+        time.sleep(0.1)
+
+    return False
 
 
 def xpath_literal(value: str) -> str:
@@ -833,8 +992,13 @@ def type_into_open_quasar_search(driver, field, value: str) -> bool:
             return rect.width > 0 && rect.height > 0 &&
                 style.display !== 'none' && style.visibility !== 'hidden' && !el.disabled;
         };
+        const active = document.activeElement;
+        const activeAllowed = active && (
+            field.contains(active) ||
+            active.closest('.q-menu, [role="listbox"], .q-virtual-scroll__content')
+        );
         const candidates = [
-            document.activeElement,
+            ...(activeAllowed ? [active] : []),
             ...Array.from(field.querySelectorAll('input')),
             ...Array.from(document.querySelectorAll(
                 '.q-menu input, [role="listbox"] input, .q-virtual-scroll__content input'
