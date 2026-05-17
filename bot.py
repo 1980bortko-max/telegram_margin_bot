@@ -103,10 +103,8 @@ LIQUIDS_SEARCH_FIELDS = [
     "brand",
     "liquid_type",
     "viscosity",
-    "color",
     "volume_from",
     "volume_to",
-    "composition",
     "article",
 ]
 

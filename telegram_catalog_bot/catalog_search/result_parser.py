@@ -47,7 +47,10 @@ ARTICLE_RE = re.compile(r"\b(?=[A-ZА-Я0-9._/-]*\d)[A-ZА-Я0-9][A-ZА-Я0-9._/
 WAREHOUSE_RE = re.compile(r"\bAF\d+\b|\b[A-Z]{1,4}\d{1,4}\b")
 DELIVERY_RE = re.compile(r"\b\d+\s*(?:день|дні|днів|day|days)\b", re.IGNORECASE)
 AVAILABILITY_RE = re.compile(r"(?:наявність|stock|qty|залишок)\D{0,20}(\d+)", re.IGNORECASE)
-ICON_WORD_RE = re.compile(r"\b(?:event|access_time|star|shopping_cart|sync|info|content_copy)\b", re.IGNORECASE)
+ICON_WORD_RE = re.compile(
+    r"\b(?:event|access_time|star|star_border|star_half|tag|shopping_cart|sync|info|content_copy)\b",
+    re.IGNORECASE,
+)
 
 
 def clean_text(value: str) -> str:
@@ -219,8 +222,7 @@ def clean_article_title(value: str, brand: str = "") -> str:
 
 
 def clean_brand_text(value: str) -> str:
-    text = re.sub(r"\bstar\b", " ", value or "", flags=re.IGNORECASE)
-    text = clean_text(text)
+    text = clean_icon_text(value)
     if re.fullmatch(r"\d+(?:[.,]\d+)?\s*(?:l|л|ml|мл)", text, flags=re.IGNORECASE):
         return ""
     if not text or not re.search(r"[A-Za-zА-Яа-я]", text):
