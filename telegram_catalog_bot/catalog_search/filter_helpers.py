@@ -502,6 +502,31 @@ def find_article_field(driver, timeout: int = 10):
                 const fields = Array.from(panel.querySelectorAll('.q-field, .q-input'))
                     .filter(visible);
 
+                const searchButtons = Array.from(document.querySelectorAll('button, .q-btn'))
+                    .filter(visible)
+                    .filter((button) => {
+                        const text = norm(button.innerText || button.textContent);
+                        return text.includes('search') || text.includes('пошук');
+                    });
+
+                for (const button of searchButtons) {
+                    const searchRect = button.getBoundingClientRect();
+                    const rowFields = fields
+                        .filter((field) => field.querySelector('input, textarea'))
+                        .filter((field) => {
+                            const rect = field.getBoundingClientRect();
+                            const centerY = rect.top + rect.height / 2;
+                            return rect.left < searchRect.left &&
+                                rect.right <= searchRect.left + 5 &&
+                                Math.abs(centerY - (searchRect.top + searchRect.height / 2)) < 35 &&
+                                rect.width > 300;
+                        })
+                        .sort((a, b) => b.getBoundingClientRect().right - a.getBoundingClientRect().right);
+                    if (rowFields.length) {
+                        return rowFields[0];
+                    }
+                }
+
                 for (const field of fields) {
                     const input = field.querySelector('input, textarea');
                     const label = field.querySelector('.q-field__label');
@@ -522,50 +547,6 @@ def find_article_field(driver, timeout: int = 10):
                     }
                 }
 
-                const searchButtons = Array.from(panel.querySelectorAll('button, .q-btn'))
-                    .filter(visible)
-                    .filter((button) => {
-                        const text = norm(button.innerText || button.textContent);
-                        return text.includes('search') || text.includes('пошук');
-                    });
-
-                if (searchButtons.length) {
-                    const searchRect = searchButtons[0].getBoundingClientRect();
-                    const sameRow = fields
-                        .filter((field) => field.querySelector('input, textarea, .q-field__native'))
-                        .filter((field) => {
-                            const rect = field.getBoundingClientRect();
-                            const centerY = rect.top + rect.height / 2;
-                            return rect.left < searchRect.left &&
-                                Math.abs(centerY - (searchRect.top + searchRect.height / 2)) < 45 &&
-                                rect.width > 250;
-                        })
-                        .sort((a, b) => b.getBoundingClientRect().width - a.getBoundingClientRect().width);
-                    if (sameRow.length) {
-                        return sameRow[0];
-                    }
-                }
-
-                const capacityText = Array.from(panel.querySelectorAll('*'))
-                    .filter(visible)
-                    .find((el) => {
-                        const text = norm(el.innerText || el.textContent);
-                        return text === 'capacity:' || text === "об'єм:" || text === 'обʼєм:';
-                    });
-                const capacityTop = capacityText ?
-                    capacityText.getBoundingClientRect().top :
-                    Number.POSITIVE_INFINITY;
-                const aboveCapacity = fields
-                    .filter((field) => field.querySelector('input, textarea, .q-field__native'))
-                    .filter((field) => {
-                        const rect = field.getBoundingClientRect();
-                        return rect.bottom < capacityTop && rect.width > 400;
-                    })
-                    .sort((a, b) => b.getBoundingClientRect().width - a.getBoundingClientRect().width);
-                if (aboveCapacity.length) {
-                    return aboveCapacity[0];
-                }
-
                 return null;
                 """,
                 panel,
@@ -581,7 +562,11 @@ def find_article_field(driver, timeout: int = 10):
 
 def set_article_value(driver, value: str) -> None:
     value = (value or "").strip()
-    field = find_article_field(driver)
+    inp = find_article_input(driver)
+    field = driver.execute_script(
+        "return arguments[0].closest('.q-field, .q-input') || arguments[0];",
+        inp,
+    )
 
     try:
         driver.execute_script("arguments[0].scrollIntoView({block:'center'});", field)
@@ -590,25 +575,6 @@ def set_article_value(driver, value: str) -> None:
 
     if not safe_click(driver, field):
         raise RuntimeError("Не вдалося натиснути поле Номер / артикул")
-
-    inp = driver.execute_script(
-        """
-        const field = arguments[0];
-        const visible = (el) => {
-            if (!el) return false;
-            const rect = el.getBoundingClientRect();
-            const style = window.getComputedStyle(el);
-            return rect.width > 0 && rect.height > 0 &&
-                style.display !== 'none' && style.visibility !== 'hidden' && !el.disabled;
-        };
-        return Array.from(field.querySelectorAll('input, textarea')).find(visible) ||
-            field.querySelector('input, textarea') ||
-            null;
-        """,
-        field,
-    )
-    if not inp:
-        raise RuntimeError("Не знайшов input у полі Номер / артикул")
 
     driver.execute_script(
         """
@@ -654,15 +620,30 @@ def set_article_value(driver, value: str) -> None:
 
 def find_article_input(driver, timeout: int = 10):
     field = find_article_field(driver, timeout)
-    inp = driver.execute_script(
-        """
-        const field = arguments[0];
-        return field.querySelector('input, textarea') || null;
-        """,
-        field,
-    )
-    if inp and inp.is_displayed():
-        return inp
+    end_at = time.time() + timeout
+
+    while time.time() < end_at:
+        try:
+            inp = driver.execute_script(
+                """
+                const field = arguments[0];
+                const visible = (el) => {
+                    if (!el) return false;
+                    const rect = el.getBoundingClientRect();
+                    const style = window.getComputedStyle(el);
+                    return rect.width > 0 && rect.height > 0 &&
+                        style.display !== 'none' && style.visibility !== 'hidden' && !el.disabled;
+                };
+                return Array.from(field.querySelectorAll('input, textarea')).find(visible) || null;
+                """,
+                field,
+            )
+            if inp and inp.is_displayed():
+                return inp
+        except Exception:
+            pass
+        time.sleep(0.1)
+
     raise RuntimeError("Filter input not found: article")
 
 
