@@ -503,18 +503,14 @@ def find_article_field(driver, timeout: int = 10):
                     .filter(visible);
 
                 for (const field of fields) {
-                    const input = field.querySelector('input');
-                    if (!visible(input)) {
-                        continue;
-                    }
-
+                    const input = field.querySelector('input, textarea');
                     const label = field.querySelector('.q-field__label');
                     const values = [
                         field.innerText || field.textContent,
                         label && label.innerText,
-                        input.placeholder,
-                        input.getAttribute('aria-label'),
-                        input.id,
+                        input && input.placeholder,
+                        input && input.getAttribute('aria-label'),
+                        input && input.id,
                     ].map(norm).filter(Boolean);
 
                     if (values.some((value) =>
@@ -524,6 +520,50 @@ def find_article_field(driver, timeout: int = 10):
                     )) {
                         return field;
                     }
+                }
+
+                const searchButtons = Array.from(panel.querySelectorAll('button, .q-btn'))
+                    .filter(visible)
+                    .filter((button) => {
+                        const text = norm(button.innerText || button.textContent);
+                        return text.includes('search') || text.includes('пошук');
+                    });
+
+                if (searchButtons.length) {
+                    const searchRect = searchButtons[0].getBoundingClientRect();
+                    const sameRow = fields
+                        .filter((field) => field.querySelector('input, textarea, .q-field__native'))
+                        .filter((field) => {
+                            const rect = field.getBoundingClientRect();
+                            const centerY = rect.top + rect.height / 2;
+                            return rect.left < searchRect.left &&
+                                Math.abs(centerY - (searchRect.top + searchRect.height / 2)) < 45 &&
+                                rect.width > 250;
+                        })
+                        .sort((a, b) => b.getBoundingClientRect().width - a.getBoundingClientRect().width);
+                    if (sameRow.length) {
+                        return sameRow[0];
+                    }
+                }
+
+                const capacityText = Array.from(panel.querySelectorAll('*'))
+                    .filter(visible)
+                    .find((el) => {
+                        const text = norm(el.innerText || el.textContent);
+                        return text === 'capacity:' || text === "об'єм:" || text === 'обʼєм:';
+                    });
+                const capacityTop = capacityText ?
+                    capacityText.getBoundingClientRect().top :
+                    Number.POSITIVE_INFINITY;
+                const aboveCapacity = fields
+                    .filter((field) => field.querySelector('input, textarea, .q-field__native'))
+                    .filter((field) => {
+                        const rect = field.getBoundingClientRect();
+                        return rect.bottom < capacityTop && rect.width > 400;
+                    })
+                    .sort((a, b) => b.getBoundingClientRect().width - a.getBoundingClientRect().width);
+                if (aboveCapacity.length) {
+                    return aboveCapacity[0];
                 }
 
                 return null;
