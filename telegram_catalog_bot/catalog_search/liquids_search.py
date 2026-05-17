@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 from typing import Dict, List
 
+from selenium.webdriver.common.keys import Keys
+
 from config import CATALOG_SEARCH_LIMIT
 from .crm_session import get_crm_session
 from .filter_helpers import (
@@ -102,8 +104,26 @@ def apply_liquids_filters(driver, filters: LiquidsFilters, debug_dir) -> None:
     values = filters.filter_values()
     for field_name, value in values.items():
         debug_log(f"Set Liquids filter: {field_name}={value}", debug_dir)
-        set_filter_value(driver, field_name, value)
+        try:
+            set_filter_value(driver, field_name, value)
+        except Exception as exc:
+            if field_name != "brand":
+                raise
+            close_optional_filter(driver)
+            debug_log(f"Skip unknown Liquids brand: {value}. Error: {exc}", debug_dir)
+            continue
         debug_log(f"Set Liquids filter OK: {field_name}", debug_dir)
+
+
+def close_optional_filter(driver) -> None:
+    try:
+        driver.switch_to.active_element.send_keys(Keys.ESCAPE)
+    except Exception:
+        pass
+    try:
+        driver.execute_script("document.body.click();")
+    except Exception:
+        pass
 
 
 def format_products_for_telegram(products: List[CatalogProduct]) -> List[str]:
