@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from typing import Dict, List
 
+from selenium.common.exceptions import InvalidSessionIdException
 from selenium.webdriver.common.keys import Keys
 
 from config import CATALOG_SEARCH_LIMIT
@@ -74,30 +75,46 @@ def search_liquids(filters: LiquidsFilters, limit: int = CATALOG_SEARCH_LIMIT) -
     session = get_crm_session()
 
     with session.lock:
-        driver = session.driver
+        try:
+            return _search_liquids_locked(session, filters, limit)
+        except Exception as exc:
+            if not is_invalid_selenium_session(exc):
+                raise
 
-        debug_log(f"Liquids search start: {filters.active_values()}", session.debug_dir)
-        session.open_liquids_from_sidebar()
-        require_liquids_page(driver)
+            debug_log("Autofun Selenium session expired. Restart CRM driver and retry search once.", session.debug_dir)
+            session.close()
+            return _search_liquids_locked(session, filters, limit)
 
-        if filters.client_group:
-            session.set_client_group(filters.client_group)
 
-        save_debug_screenshot(driver, session.debug_dir, "liquids_before_filters")
+def _search_liquids_locked(session, filters: LiquidsFilters, limit: int) -> List[CatalogProduct]:
+    driver = session.driver
 
-        apply_liquids_filters(driver, filters, session.debug_dir)
-        save_debug_screenshot(driver, session.debug_dir, "liquids_after_filters")
+    debug_log(f"Liquids search start: {filters.active_values()}", session.debug_dir)
+    session.open_liquids_from_sidebar()
+    require_liquids_page(driver)
 
-        search_button = find_liquids_search_button(driver)
-        if not safe_click(driver, search_button):
-            raise RuntimeError("Не вдалося натиснути кнопку Пошук")
+    if filters.client_group:
+        session.set_client_group(filters.client_group)
 
-        wait_results_loaded(driver)
-        save_debug_screenshot(driver, session.debug_dir, "liquids_after_search")
+    save_debug_screenshot(driver, session.debug_dir, "liquids_before_filters")
 
-        products = parse_products(driver, limit=limit)
-        debug_log(f"Liquids search parsed products: {len(products)}", session.debug_dir)
-        return products[:limit]
+    apply_liquids_filters(driver, filters, session.debug_dir)
+    save_debug_screenshot(driver, session.debug_dir, "liquids_after_filters")
+
+    search_button = find_liquids_search_button(driver)
+    if not safe_click(driver, search_button):
+        raise RuntimeError("Не вдалося натиснути кнопку Пошук")
+
+    wait_results_loaded(driver)
+    save_debug_screenshot(driver, session.debug_dir, "liquids_after_search")
+
+    products = parse_products(driver, limit=limit)
+    debug_log(f"Liquids search parsed products: {len(products)}", session.debug_dir)
+    return products[:limit]
+
+
+def is_invalid_selenium_session(exc: Exception) -> bool:
+    return isinstance(exc, InvalidSessionIdException) or "invalid session id" in str(exc).lower()
 
 
 def apply_liquids_filters(driver, filters: LiquidsFilters, debug_dir) -> None:

@@ -1452,8 +1452,9 @@ async def run_liquids_search(message: types.Message):
         products = await asyncio.to_thread(search_liquids, filters)
     except Exception as e:
         user_state.pop(user_id, None)
+        error_text = str(e).splitlines()[0].strip() or e.__class__.__name__
         await message.answer(
-            f"❌ Помилка пошуку рідин: {e}",
+            f"❌ Помилка пошуку рідин: {error_text}",
             reply_markup=get_main_keyboard(user_id)
         )
         return

@@ -90,9 +90,13 @@ class CrmSession:
 
     def close(self) -> None:
         if self._driver is not None:
-            self._driver.quit()
-            self._driver = None
-            self._wait = None
+            try:
+                self._driver.quit()
+            except Exception as exc:
+                debug_log(f"Ignore CRM driver close error: {exc}", self.debug_dir)
+            finally:
+                self._driver = None
+                self._wait = None
 
     def ensure_ready(self) -> None:
         try:
