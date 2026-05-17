@@ -286,6 +286,62 @@ def quasar_set_value(driver, inp, value: str, timeout: float = 2.0) -> None:
         time.sleep(0.1)
 
 
+def find_filter_field(driver, filter_name: str, timeout: int = 10):
+    require_liquids_page(driver)
+    config = SELECTORS["liquids"]["filters"][filter_name]
+    targets = [
+        normalize_choice_text(value)
+        for value in list(config.get("labels", [])) + list(config.get("placeholders", []))
+    ]
+    end_at = time.time() + timeout
+    last_error = None
+
+    while time.time() < end_at:
+        try:
+            panel = find_liquids_filter_panel(driver)
+            field = driver.execute_script(
+                """
+                const panel = arguments[0];
+                const targets = arguments[1];
+                const norm = (value) => String(value || '')
+                    .replace(/[–—]/g, '-')
+                    .trim()
+                    .replace(/\\s+/g, ' ')
+                    .toLowerCase();
+                const visible = (el) => {
+                    const rect = el.getBoundingClientRect();
+                    const style = window.getComputedStyle(el);
+                    return rect.width > 0 && rect.height > 0 &&
+                        style.display !== 'none' && style.visibility !== 'hidden';
+                };
+                const fields = Array.from(panel.querySelectorAll('.q-field, .q-select, .q-input'))
+                    .filter(visible);
+                for (const field of fields) {
+                    const label = field.querySelector('.q-field__label');
+                    const input = field.querySelector('input');
+                    const values = [
+                        label && label.innerText,
+                        input && input.placeholder,
+                        input && input.getAttribute('aria-label')
+                    ].map(norm);
+                    if (values.some((value) => targets.includes(value))) {
+                        return field;
+                    }
+                }
+                return null;
+                """,
+                panel,
+                targets,
+            )
+            if field and field.is_displayed():
+                return field
+        except Exception as exc:
+            last_error = exc
+        time.sleep(0.2)
+
+    raise RuntimeError(f"Filter field not found: {filter_name}. Last error: {last_error}")
+
+
 def xpath_literal(value: str) -> str:
     if "'" not in value:
         return f"'{value}'"
@@ -401,6 +457,9 @@ def click_matching_quasar_option(driver, value: str) -> bool:
             pass
         time.sleep(0.1)
 
+    if scroll_and_click_matching_quasar_option(driver, value_norm):
+        return True
+
     js_clicked = driver.execute_script(
         """
         const target = arguments[0];
@@ -441,6 +500,84 @@ def click_matching_quasar_option(driver, value: str) -> bool:
         return True
 
     return False
+
+
+def scroll_and_click_matching_quasar_option(driver, value_norm: str) -> bool:
+    option_css = (
+        ".q-menu .q-item, "
+        ".q-menu [role='option'], "
+        ".q-virtual-scroll__content .q-item, "
+        "[role='listbox'] .q-item, "
+        ".q-item[role='option']"
+    )
+
+    for _ in range(30):
+        try:
+            options = driver.find_elements(By.CSS_SELECTOR, option_css)
+            visible = [opt for opt in options if opt.is_displayed() and normalize_choice_text(opt.text)]
+            for option in visible:
+                if normalize_choice_text(option.text) == value_norm:
+                    if safe_click(driver, clickable_ancestor(driver, option)):
+                        time.sleep(0.25)
+                        return True
+
+            did_scroll = driver.execute_script(
+                """
+                const candidates = Array.from(document.querySelectorAll(
+                    '.q-menu .q-virtual-scroll, .q-menu .scroll, .q-menu'
+                ));
+                const visible = (el) => {
+                    const rect = el.getBoundingClientRect();
+                    const style = window.getComputedStyle(el);
+                    return rect.width > 0 && rect.height > 0 &&
+                        style.display !== 'none' && style.visibility !== 'hidden';
+                };
+                const scrollable = candidates.find((el) =>
+                    visible(el) && el.scrollHeight > el.clientHeight + 5
+                );
+                if (!scrollable) return false;
+                const before = scrollable.scrollTop;
+                scrollable.scrollTop = before + Math.max(80, Math.floor(scrollable.clientHeight * 0.8));
+                return scrollable.scrollTop !== before;
+                """
+            )
+            if not did_scroll:
+                return False
+        except Exception:
+            return False
+        time.sleep(0.1)
+
+    return False
+
+
+def select_quasar_option(driver, field, value: str, timeout: float = 5.0) -> None:
+    value = (value or "").strip()
+    end_at = time.time() + timeout
+
+    while time.time() < end_at:
+        try:
+            driver.execute_script("arguments[0].scrollIntoView({block:'center'});", field)
+        except Exception:
+            pass
+
+        if safe_click(driver, field):
+            time.sleep(0.3)
+            if click_matching_quasar_option(driver, value) and wait_field_choice(driver, field, value):
+                return
+
+        try:
+            arrows = field.find_elements(By.CSS_SELECTOR, ".q-field__append, .q-select__dropdown-icon")
+            for arrow in arrows:
+                if arrow.is_displayed() and safe_click(driver, arrow):
+                    time.sleep(0.3)
+                    if click_matching_quasar_option(driver, value) and wait_field_choice(driver, field, value):
+                        return
+        except Exception:
+            pass
+
+        time.sleep(0.2)
+
+    raise RuntimeError(f"Не вдалося вибрати значення зі списку: {value}")
 
 
 def wait_field_choice(driver, field, value: str, timeout: float = 2.0) -> bool:
@@ -494,6 +631,10 @@ def find_liquids_search_button(driver, timeout: int = 10):
 def set_filter_value(driver, filter_name: str, value: str) -> None:
     value = (value or "").strip()
     if not value:
+        return
+    if filter_name in ("liquid_type", "viscosity"):
+        field = find_filter_field(driver, filter_name)
+        select_quasar_option(driver, field, value)
         return
     inp = find_filter_input(driver, filter_name)
     quasar_set_value(driver, inp, value)
