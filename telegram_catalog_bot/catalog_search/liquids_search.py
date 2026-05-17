@@ -19,6 +19,7 @@ from .result_parser import CatalogProduct, parse_products
 
 @dataclass
 class LiquidsFilters:
+    client_group: str = ""
     brand: str = ""
     liquid_type: str = ""
     viscosity: str = ""
@@ -31,6 +32,7 @@ class LiquidsFilters:
     @classmethod
     def from_dict(cls, data: Dict[str, str]) -> "LiquidsFilters":
         return cls(
+            client_group=(data.get("client_group") or "").strip(),
             brand=(data.get("brand") or "").strip(),
             liquid_type=(data.get("liquid_type") or "").strip(),
             viscosity=(data.get("viscosity") or "").strip(),
@@ -45,6 +47,7 @@ class LiquidsFilters:
         return {
             key: value
             for key, value in {
+                "client_group": self.client_group,
                 "brand": self.brand,
                 "liquid_type": self.liquid_type,
                 "viscosity": self.viscosity,
@@ -57,6 +60,13 @@ class LiquidsFilters:
             if value
         }
 
+    def filter_values(self) -> Dict[str, str]:
+        return {
+            key: value
+            for key, value in self.active_values().items()
+            if key != "client_group"
+        }
+
 
 def search_liquids(filters: LiquidsFilters, limit: int = CATALOG_SEARCH_LIMIT) -> List[CatalogProduct]:
     session = get_crm_session()
@@ -67,6 +77,10 @@ def search_liquids(filters: LiquidsFilters, limit: int = CATALOG_SEARCH_LIMIT) -
         debug_log(f"Liquids search start: {filters.active_values()}", session.debug_dir)
         session.open_liquids_from_sidebar()
         require_liquids_page(driver)
+
+        if filters.client_group:
+            session.set_client_group(filters.client_group)
+
         save_debug_screenshot(driver, session.debug_dir, "liquids_before_filters")
 
         apply_liquids_filters(driver, filters, session.debug_dir)
@@ -85,7 +99,7 @@ def search_liquids(filters: LiquidsFilters, limit: int = CATALOG_SEARCH_LIMIT) -
 
 
 def apply_liquids_filters(driver, filters: LiquidsFilters, debug_dir) -> None:
-    values = filters.active_values()
+    values = filters.filter_values()
     for field_name, value in values.items():
         debug_log(f"Set Liquids filter: {field_name}={value}", debug_dir)
         set_filter_value(driver, field_name, value)

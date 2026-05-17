@@ -28,8 +28,10 @@ from .filter_helpers import (
     SELECTORS,
     clickable_ancestor,
     debug_log,
+    find_client_group_field,
     safe_click,
     save_debug_screenshot,
+    select_quasar_option,
     wait_overlay_gone,
 )
 
@@ -198,6 +200,21 @@ class CrmSession:
 
         save_debug_screenshot(driver, self.debug_dir, "liquids_sidebar_not_found")
         raise RuntimeError("Не знайшов пункт меню 'Рідини' у sidebar")
+
+    def set_client_group(self, client_group: str) -> None:
+        client_group = (client_group or "").strip()
+        if not client_group:
+            return
+
+        self.ensure_ready()
+        driver = self.driver
+
+        debug_log(f"Set Autofun client group: {client_group}", self.debug_dir)
+        field = find_client_group_field(driver)
+        select_quasar_option(driver, field, client_group, timeout=12.0)
+        wait_overlay_gone(driver, 15)
+        time.sleep(0.4)
+        debug_log("Set Autofun client group OK", self.debug_dir)
 
     def _try_accept_cookies(self) -> None:
         try:

@@ -33,6 +33,7 @@ SELECTORS: Dict[str, Any] = {
             "//*[contains(@class,'q-tab') or contains(@class,'q-router-link') or contains(@class,'q-item')]"
             "[contains(normalize-space(),'Рідини') or contains(normalize-space(),'Liquids')]"
         ),
+        "client_group_labels": ["Client group", "Клієнтська група", "Клиентская группа"],
     },
     "login": {
         "af_ids_button": "//button[.//div[contains(text(),'AF IDS')] or contains(.,'AF IDS')]",
@@ -340,6 +341,72 @@ def find_filter_field(driver, filter_name: str, timeout: int = 10):
         time.sleep(0.2)
 
     raise RuntimeError(f"Filter field not found: {filter_name}. Last error: {last_error}")
+
+
+def find_client_group_field(driver, timeout: int = 10):
+    targets = [
+        normalize_choice_text(value)
+        for value in SELECTORS["shell"]["client_group_labels"]
+    ]
+    end_at = time.time() + timeout
+    last_error = None
+
+    while time.time() < end_at:
+        try:
+            field = driver.execute_script(
+                """
+                const targets = arguments[0];
+                const norm = (value) => String(value || '')
+                    .replace(/[–—]/g, '-')
+                    .trim()
+                    .replace(/\\s+/g, ' ')
+                    .toLowerCase();
+                const visible = (el) => {
+                    const rect = el.getBoundingClientRect();
+                    const style = window.getComputedStyle(el);
+                    return rect.width > 0 && rect.height > 0 &&
+                        style.display !== 'none' && style.visibility !== 'hidden';
+                };
+                const isClientGroup = (field) => {
+                    const label = field.querySelector('.q-field__label');
+                    const input = field.querySelector('input');
+                    const values = [
+                        label && label.innerText,
+                        input && input.placeholder,
+                        input && input.getAttribute('aria-label'),
+                        field.innerText || field.textContent
+                    ].map(norm).filter(Boolean);
+
+                    return values.some((value) =>
+                        targets.some((target) =>
+                            value === target ||
+                            value.startsWith(target + ' ') ||
+                            value.includes(target)
+                        )
+                    );
+                };
+
+                const fields = Array.from(document.querySelectorAll('.q-field, .q-select'))
+                    .filter(visible)
+                    .filter((field) => !field.closest(
+                        '.filter-tires-container, .filter-liquids-container, ' +
+                        '.filter-tires-body-card, .filter-liquids-body-card'
+                    ));
+
+                const topBarFields = fields.filter((field) =>
+                    field.closest('.q-header, header, .q-toolbar, .q-layout__section--marginal')
+                );
+                return topBarFields.find(isClientGroup) || fields.find(isClientGroup) || null;
+                """,
+                targets,
+            )
+            if field and field.is_displayed():
+                return field
+        except Exception as exc:
+            last_error = exc
+        time.sleep(0.2)
+
+    raise RuntimeError(f"Client group field not found. Last error: {last_error}")
 
 
 def xpath_literal(value: str) -> str:

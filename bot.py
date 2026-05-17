@@ -696,6 +696,38 @@ def build_paginated_keyboard(items: List[str], page: int, extra_bottom_buttons=N
     ), total_pages
 
 
+def build_liquids_client_group_keyboard(items: List[str], page: int):
+    total = len(items)
+    total_pages = (total - 1) // PAGE_SIZE + 1 if total > 0 else 1
+
+    if page < 0:
+        page = 0
+    if page >= total_pages:
+        page = total_pages - 1
+
+    start = page * PAGE_SIZE
+    end = start + PAGE_SIZE
+    page_items = items[start:end]
+
+    keyboard_rows = [[KeyboardButton(text=item)] for item in page_items]
+
+    nav_row = []
+    if page > 0:
+        nav_row.append(KeyboardButton(text="⬅️ Назад"))
+    if end < total:
+        nav_row.append(KeyboardButton(text="➡️ Далі"))
+
+    if nav_row:
+        keyboard_rows.append(nav_row)
+
+    keyboard_rows.append([KeyboardButton(text="🔙 Головне меню")])
+
+    return ReplyKeyboardMarkup(
+        keyboard=keyboard_rows,
+        resize_keyboard=True
+    ), total_pages
+
+
 def allowed_user_exists(phone: str) -> bool:
     normalized_phone = normalize_phone(phone)
     rows, _ws = load_allowed_users()
@@ -1231,12 +1263,84 @@ def normalize_viscosity(value: str) -> Optional[str]:
     return None
 
 
+def get_liquids_client_groups() -> List[str]:
+    catalogs = load_catalogs()
+    source = catalogs.get("oms_price_groups", []) or catalogs.get("calc_client_groups", [])
+    groups = []
+    seen = set()
+
+    for item in source:
+        value = normalize_text(item)
+        if value and value not in seen:
+            groups.append(value)
+            seen.add(value)
+
+    return groups
+
+
 async def start_liquids_search(message: types.Message):
+    await show_liquids_client_groups_page(message, page=0)
+
+
+async def show_liquids_client_groups_page(message: types.Message, page: int):
+    client_groups = get_liquids_client_groups()
+
+    if not client_groups:
+        await message.answer(
+            "❌ Немає клієнтських груп. Спочатку натисни «Оновити довідники».",
+            reply_markup=get_main_keyboard(message.from_user.id)
+        )
+        return
+
+    keyboard, total_pages = build_liquids_client_group_keyboard(client_groups, page)
+
+    if page < 0:
+        page = 0
+    if page >= total_pages:
+        page = total_pages - 1
+
     user_state[message.from_user.id] = {
-        "step": "catalog_liquids_filter",
-        "field_index": 0,
+        "step": "catalog_liquids_client_group",
+        "page": page,
         "answers": {},
     }
+
+    await message.answer(
+        f"🔎 Пошук рідин\n\nКлієнтська група:\nСторінка {page + 1} з {total_pages}",
+        reply_markup=keyboard
+    )
+
+
+async def handle_liquids_client_group_answer(message: types.Message, raw_text: str, text: str):
+    user_id = message.from_user.id
+    state = user_state.get(user_id, {})
+    current_page = state.get("page", 0)
+
+    if text == "➡️ далі":
+        await show_liquids_client_groups_page(message, current_page + 1)
+        return
+
+    if text == "⬅️ назад":
+        await show_liquids_client_groups_page(message, current_page - 1)
+        return
+
+    client_groups = get_liquids_client_groups()
+    selected = normalize_text(raw_text)
+
+    if selected not in client_groups:
+        keyboard, _total_pages = build_liquids_client_group_keyboard(client_groups, current_page)
+        await message.answer(
+            "❌ Обери клієнтську групу кнопкою зі списку.",
+            reply_markup=keyboard
+        )
+        return
+
+    user_state[user_id] = {
+        "step": "catalog_liquids_filter",
+        "field_index": 0,
+        "answers": {"client_group": selected},
+    }
+    await message.answer(f"✅ Клієнтська група: {selected}")
     await ask_liquids_filter(message)
 
 
@@ -1885,6 +1989,10 @@ async def handle_message(message: types.Message):
 
     if text == "🔎 пошук рідин":
         await start_liquids_search(message)
+        return
+
+    if step == "catalog_liquids_client_group":
+        await handle_liquids_client_group_answer(message, raw_text, text)
         return
 
     if step == "catalog_liquids_filter":
