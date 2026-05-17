@@ -476,7 +476,7 @@ def find_liquids_filter_panel(driver):
     return visible_panels[0]
 
 
-def find_article_input(driver, timeout: int = 10):
+def find_article_field(driver, timeout: int = 10):
     require_liquids_page(driver)
     end_at = time.time() + timeout
     last_error = None
@@ -484,7 +484,7 @@ def find_article_input(driver, timeout: int = 10):
     while time.time() < end_at:
         try:
             panel = find_liquids_filter_panel(driver)
-            inp = driver.execute_script(
+            field = driver.execute_script(
                 """
                 const panel = arguments[0];
                 const norm = (value) => String(value || '')
@@ -504,7 +504,7 @@ def find_article_input(driver, timeout: int = 10):
 
                 for (const field of fields) {
                     const input = field.querySelector('input');
-                    if (!visible(input) || field.closest('.q-select')) {
+                    if (!visible(input)) {
                         continue;
                     }
 
@@ -522,23 +522,108 @@ def find_article_input(driver, timeout: int = 10):
                         value.includes('номер') ||
                         value.includes('артикул')
                     )) {
-                        return input;
+                        return field;
                     }
                 }
 
-                const inputs = Array.from(panel.querySelectorAll('input'))
-                    .filter((input) => visible(input) && !input.closest('.q-select'));
-                return inputs[0] || null;
+                return null;
                 """,
                 panel,
             )
-            if inp and inp.is_displayed():
-                return inp
+            if field and field.is_displayed():
+                return field
         except Exception as exc:
             last_error = exc
         time.sleep(0.2)
 
-    raise RuntimeError(f"Filter input not found: article. Last error: {last_error}")
+    raise RuntimeError(f"Filter field not found: article. Last error: {last_error}")
+
+
+def set_article_value(driver, value: str) -> None:
+    value = (value or "").strip()
+    field = find_article_field(driver)
+
+    try:
+        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", field)
+    except Exception:
+        pass
+
+    if not safe_click(driver, field):
+        raise RuntimeError("Не вдалося натиснути поле Номер / артикул")
+
+    inp = driver.execute_script(
+        """
+        const field = arguments[0];
+        const visible = (el) => {
+            if (!el) return false;
+            const rect = el.getBoundingClientRect();
+            const style = window.getComputedStyle(el);
+            return rect.width > 0 && rect.height > 0 &&
+                style.display !== 'none' && style.visibility !== 'hidden' && !el.disabled;
+        };
+        return Array.from(field.querySelectorAll('input, textarea')).find(visible) ||
+            field.querySelector('input, textarea') ||
+            null;
+        """,
+        field,
+    )
+    if not inp:
+        raise RuntimeError("Не знайшов input у полі Номер / артикул")
+
+    driver.execute_script(
+        """
+        const el = arguments[0];
+        el.removeAttribute('readonly');
+        el.removeAttribute('disabled');
+        el.focus();
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+        if (setter) {
+            setter.call(el, '');
+        } else {
+            el.value = '';
+        }
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        """,
+        inp,
+    )
+
+    inp.send_keys(value)
+    driver.execute_script(
+        """
+        const el = arguments[0];
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        el.dispatchEvent(new Event('blur', { bubbles: true }));
+        """,
+        inp,
+    )
+
+    end_at = time.time() + 2
+    while time.time() < end_at:
+        try:
+            current = quasar_get_value(driver, inp)
+            if current == value:
+                return
+        except Exception:
+            pass
+        time.sleep(0.1)
+
+    raise RuntimeError("Не вдалося заповнити поле Номер / артикул")
+
+
+def find_article_input(driver, timeout: int = 10):
+    field = find_article_field(driver, timeout)
+    inp = driver.execute_script(
+        """
+        const field = arguments[0];
+        return field.querySelector('input, textarea') || null;
+        """,
+        field,
+    )
+    if inp and inp.is_displayed():
+        return inp
+    raise RuntimeError("Filter input not found: article")
 
 
 def find_filter_input(driver, filter_name: str, timeout: int = 10):
@@ -904,6 +989,9 @@ def find_liquids_search_button(driver, timeout: int = 10):
 def set_filter_value(driver, filter_name: str, value: str) -> None:
     value = (value or "").strip()
     if not value:
+        return
+    if filter_name == "article":
+        set_article_value(driver, value)
         return
     if filter_name in ("liquid_type", "viscosity"):
         field = find_filter_field(driver, filter_name)
