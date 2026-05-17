@@ -26,14 +26,11 @@ from config import (
 from .filter_helpers import (
     SELECTORS,
     clickable_ancestor,
-    confirm_client_group_update_popup,
     debug_log,
     find_client_group_field,
-    is_client_group_update_popup_visible,
     safe_click,
     save_debug_screenshot,
     select_searchable_quasar_option,
-    wait_client_group_choice,
     wait_overlay_gone,
 )
 from .runtime_settings import is_catalog_search_headless
@@ -221,16 +218,7 @@ class CrmSession:
 
         debug_log(f"Set Autofun client group: {client_group}", self.debug_dir)
         field = find_client_group_field(driver)
-        try:
-            select_searchable_quasar_option(driver, field, client_group, timeout=12.0)
-        except RuntimeError:
-            selected = wait_client_group_choice(driver, client_group, timeout=1.5)
-            popup_visible = is_client_group_update_popup_visible(driver)
-            if not selected and not popup_visible:
-                raise
-            debug_log("Client group selection accepted after CRM field refresh", self.debug_dir)
-
-        confirm_client_group_update_popup(driver, self.debug_dir, timeout=4.0)
+        select_searchable_quasar_option(driver, field, client_group, timeout=12.0)
         wait_overlay_gone(driver, 15)
         time.sleep(0.4)
         debug_log("Set Autofun client group OK", self.debug_dir)
