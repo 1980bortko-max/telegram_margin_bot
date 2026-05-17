@@ -104,6 +104,62 @@ SELECTORS: Dict[str, Any] = {
     },
 }
 
+KNOWN_SELECT_OPTIONS: Dict[str, List[str]] = {
+    "liquid_type": [
+        "ENGINE OIL",
+        "HYDRAULIC FLUIDS",
+        "BREAK FLUIDS",
+        "TRANSMISSION OIL",
+        "ANTIFREEZE",
+        "AXLE GEAR OIL",
+        "LUBRICATION",
+        "COMPRESSOR OIL",
+        "HYDRAULIC OIL",
+    ],
+    "viscosity": [
+        "20W-40",
+        "0W-40",
+        "SAE 30",
+        "80W-90",
+        "ATF III",
+        "VG 22",
+        "VG 68",
+        "20W-20",
+        "80W-140",
+        "25W-40",
+        "15W-40",
+        "10W",
+        "AZF 5",
+        "SAE 90",
+        "5W-50",
+        "70W",
+        "DCT",
+        "VG 220",
+        "DEXRON III G",
+        "DCTF-II",
+        "ATF",
+        "0W-15",
+        "ATF 8HP",
+        "VG 150",
+        "70W-80",
+        "5W-16",
+        "10W-40",
+        "DEXRON VI",
+        "0W-50",
+        "SAE 97",
+        "0W-30",
+        "DCTF-I",
+        "DEXRON II",
+        "0W-16",
+        "SAE 50",
+        "VG 100",
+        "15W-50",
+        "0W-20",
+        "10W-50",
+        "75W-80",
+    ],
+}
+
 
 def debug_log(message: str, debug_dir: Optional[Path] = None) -> None:
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -182,6 +238,18 @@ def clickable_ancestor(driver, el):
         )
     except Exception:
         return el
+
+
+def close_open_quasar_menus(driver) -> None:
+    try:
+        driver.switch_to.active_element.send_keys(Keys.ESCAPE)
+    except Exception:
+        pass
+    try:
+        driver.execute_script("document.body.click();")
+    except Exception:
+        pass
+    time.sleep(0.15)
 
 
 def quasar_get_value(driver, inp) -> str:
@@ -621,6 +689,7 @@ def scroll_and_click_matching_quasar_option(driver, value_norm: str) -> bool:
 def select_quasar_option(driver, field, value: str, timeout: float = 5.0) -> None:
     value = (value or "").strip()
     end_at = time.time() + timeout
+    close_open_quasar_menus(driver)
 
     while time.time() < end_at:
         try:
@@ -650,6 +719,42 @@ def select_quasar_option(driver, field, value: str, timeout: float = 5.0) -> Non
         time.sleep(0.2)
 
     raise RuntimeError(f"Не вдалося вибрати значення зі списку: {value}")
+
+
+def select_known_quasar_option_by_index(driver, field, filter_name: str, value: str) -> bool:
+    options = KNOWN_SELECT_OPTIONS.get(filter_name, [])
+    normalized = [normalize_choice_text(option) for option in options]
+    value_norm = normalize_choice_text(value)
+
+    if value_norm not in normalized:
+        return False
+
+    index = normalized.index(value_norm)
+    close_open_quasar_menus(driver)
+
+    try:
+        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", field)
+    except Exception:
+        pass
+
+    if not safe_click(driver, field):
+        return False
+
+    time.sleep(0.4)
+
+    if click_matching_quasar_option(driver, value) and wait_field_choice(driver, field, value, timeout=2.0):
+        return True
+
+    try:
+        target = driver.switch_to.active_element or field
+        for _ in range(index + 1):
+            target.send_keys(Keys.ARROW_DOWN)
+            time.sleep(0.02)
+        target.send_keys(Keys.ENTER)
+        time.sleep(0.4)
+        return wait_field_choice(driver, field, value, timeout=3.0)
+    except Exception:
+        return False
 
 
 def press_open_select_option(driver, field, value: str) -> bool:
@@ -682,6 +787,7 @@ def press_open_select_option(driver, field, value: str) -> bool:
 def select_searchable_quasar_option(driver, field, value: str, timeout: float = 8.0) -> None:
     value = (value or "").strip()
     end_at = time.time() + timeout
+    close_open_quasar_menus(driver)
 
     while time.time() < end_at:
         try:
@@ -797,8 +903,8 @@ def wait_field_choice(driver, field, value: str, timeout: float = 2.0) -> bool:
                     if (text) parts.push(...text.split(/\\n+/));
                 };
                 push(root.innerText || root.textContent || '');
-                root.querySelectorAll('input, .q-chip, .q-chip__content, .q-field__native').forEach((el) => {
-                    push(el.value || el.innerText || el.textContent || '');
+                root.querySelectorAll('.q-chip, .q-chip__content, .q-field__native').forEach((el) => {
+                    push(el.innerText || el.textContent || '');
                 });
                 return parts;
                 """,
@@ -839,7 +945,21 @@ def set_filter_value(driver, filter_name: str, value: str) -> None:
         return
     if filter_name in ("liquid_type", "viscosity"):
         field = find_filter_field(driver, filter_name)
-        select_quasar_option(driver, field, value)
-        return
+        try:
+            select_searchable_quasar_option(driver, field, value, timeout=6.0)
+            return
+        except RuntimeError:
+            close_open_quasar_menus(driver)
+
+        try:
+            select_quasar_option(driver, field, value, timeout=4.0)
+            return
+        except RuntimeError:
+            close_open_quasar_menus(driver)
+
+        if select_known_quasar_option_by_index(driver, field, filter_name, value):
+            return
+
+        raise RuntimeError(f"Не вдалося вибрати значення зі списку: {value}")
     inp = find_filter_input(driver, filter_name)
     quasar_set_value(driver, inp, value)
