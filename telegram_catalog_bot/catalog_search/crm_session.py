@@ -31,7 +31,7 @@ from .filter_helpers import (
     find_client_group_field,
     safe_click,
     save_debug_screenshot,
-    select_quasar_option,
+    select_searchable_quasar_option,
     wait_overlay_gone,
 )
 
@@ -211,7 +211,7 @@ class CrmSession:
 
         debug_log(f"Set Autofun client group: {client_group}", self.debug_dir)
         field = find_client_group_field(driver)
-        select_quasar_option(driver, field, client_group, timeout=12.0)
+        select_searchable_quasar_option(driver, field, client_group, timeout=12.0)
         wait_overlay_gone(driver, 15)
         time.sleep(0.4)
         debug_log("Set Autofun client group OK", self.debug_dir)

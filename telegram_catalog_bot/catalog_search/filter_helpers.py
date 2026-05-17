@@ -647,6 +647,109 @@ def select_quasar_option(driver, field, value: str, timeout: float = 5.0) -> Non
     raise RuntimeError(f"Не вдалося вибрати значення зі списку: {value}")
 
 
+def select_searchable_quasar_option(driver, field, value: str, timeout: float = 8.0) -> None:
+    value = (value or "").strip()
+    end_at = time.time() + timeout
+
+    while time.time() < end_at:
+        try:
+            driver.execute_script("arguments[0].scrollIntoView({block:'center'});", field)
+        except Exception:
+            pass
+
+        if safe_click(driver, field):
+            time.sleep(0.3)
+            type_into_open_quasar_search(driver, field, value)
+            if click_matching_quasar_option(driver, value) and wait_field_choice(driver, field, value, timeout=3.0):
+                return
+
+        try:
+            arrows = field.find_elements(By.CSS_SELECTOR, ".q-field__append, .q-select__dropdown-icon")
+            for arrow in arrows:
+                if arrow.is_displayed() and safe_click(driver, arrow):
+                    time.sleep(0.3)
+                    type_into_open_quasar_search(driver, field, value)
+                    if click_matching_quasar_option(driver, value) and wait_field_choice(
+                        driver,
+                        field,
+                        value,
+                        timeout=3.0,
+                    ):
+                        return
+        except Exception:
+            pass
+
+        time.sleep(0.2)
+
+    raise RuntimeError(f"Не вдалося знайти і вибрати значення зі списку: {value}")
+
+
+def type_into_open_quasar_search(driver, field, value: str) -> bool:
+    search_input = driver.execute_script(
+        """
+        const field = arguments[0];
+        const visible = (el) => {
+            if (!el || el.tagName !== 'INPUT') return false;
+            const rect = el.getBoundingClientRect();
+            const style = window.getComputedStyle(el);
+            return rect.width > 0 && rect.height > 0 &&
+                style.display !== 'none' && style.visibility !== 'hidden' && !el.disabled;
+        };
+        const candidates = [
+            document.activeElement,
+            ...Array.from(field.querySelectorAll('input')),
+            ...Array.from(document.querySelectorAll(
+                '.q-menu input, [role="listbox"] input, .q-virtual-scroll__content input'
+            ))
+        ].filter(visible);
+
+        return candidates.find((el) => !el.readOnly) || candidates[0] || null;
+        """,
+        field,
+    )
+    if not search_input:
+        return False
+
+    try:
+        safe_click(driver, search_input)
+        search_input.send_keys(Keys.COMMAND, "a")
+        search_input.send_keys(Keys.BACKSPACE)
+        search_input.send_keys(value)
+        time.sleep(0.5)
+        return True
+    except Exception:
+        pass
+
+    driver.execute_script(
+        """
+        const el = arguments[0];
+        const value = arguments[1];
+        el.removeAttribute('readonly');
+        el.removeAttribute('disabled');
+        el.focus();
+
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+        if (setter) {
+            setter.call(el, value);
+        } else {
+            el.value = value;
+        }
+
+        el.dispatchEvent(new InputEvent('input', {
+            bubbles: true,
+            cancelable: true,
+            inputType: 'insertText',
+            data: value
+        }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        """,
+        search_input,
+        value,
+    )
+    time.sleep(0.5)
+    return True
+
+
 def wait_field_choice(driver, field, value: str, timeout: float = 2.0) -> bool:
     value_norm = normalize_choice_text(value)
     end_at = time.time() + timeout
