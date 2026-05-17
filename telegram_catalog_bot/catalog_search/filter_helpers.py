@@ -545,13 +545,14 @@ def click_matching_quasar_option(driver, value: str) -> bool:
             '.q-menu .q-item, .q-menu [role="option"], ' +
             '.q-virtual-scroll__content .q-item, [role="listbox"] .q-item, ' +
             '.q-item[role="option"]'
-        )).filter((el) => visible(el) && norm(el.innerText || el.textContent) === target);
+        )).filter((el) => norm(el.innerText || el.textContent) === target);
         if (!candidates.length) {
             return false;
         }
+        candidates.sort((a, b) => Number(visible(b)) - Number(visible(a)));
         const el = candidates[0];
         el.scrollIntoView({ block: 'center' });
-        for (const eventName of ['mousedown', 'mouseup', 'click']) {
+        for (const eventName of ['pointerdown', 'mousedown', 'mouseup', 'click']) {
             el.dispatchEvent(new MouseEvent(eventName, {
                 bubbles: true,
                 cancelable: true,
@@ -631,6 +632,8 @@ def select_quasar_option(driver, field, value: str, timeout: float = 5.0) -> Non
             time.sleep(0.3)
             if click_matching_quasar_option(driver, value) and wait_field_choice(driver, field, value):
                 return
+            if press_open_select_option(driver, field, value) and wait_field_choice(driver, field, value):
+                return
 
         try:
             arrows = field.find_elements(By.CSS_SELECTOR, ".q-field__append, .q-select__dropdown-icon")
@@ -639,12 +642,41 @@ def select_quasar_option(driver, field, value: str, timeout: float = 5.0) -> Non
                     time.sleep(0.3)
                     if click_matching_quasar_option(driver, value) and wait_field_choice(driver, field, value):
                         return
+                    if press_open_select_option(driver, field, value) and wait_field_choice(driver, field, value):
+                        return
         except Exception:
             pass
 
         time.sleep(0.2)
 
     raise RuntimeError(f"Не вдалося вибрати значення зі списку: {value}")
+
+
+def press_open_select_option(driver, field, value: str) -> bool:
+    value_norm = normalize_choice_text(value)
+    options = driver.find_elements(
+        By.CSS_SELECTOR,
+        ".q-menu .q-item, .q-menu [role='option'], "
+        ".q-virtual-scroll__content .q-item, [role='listbox'] .q-item, "
+        ".q-item[role='option']",
+    )
+    visible = [option for option in options if option.is_displayed() and normalize_choice_text(option.text)]
+
+    for index, option in enumerate(visible):
+        if normalize_choice_text(option.text) != value_norm:
+            continue
+
+        try:
+            target = driver.switch_to.active_element or field
+            for _ in range(index + 1):
+                target.send_keys(Keys.ARROW_DOWN)
+            target.send_keys(Keys.ENTER)
+            time.sleep(0.3)
+            return True
+        except Exception:
+            return False
+
+    return False
 
 
 def select_searchable_quasar_option(driver, field, value: str, timeout: float = 8.0) -> None:
@@ -772,7 +804,10 @@ def wait_field_choice(driver, field, value: str, timeout: float = 2.0) -> bool:
                 """,
                 field,
             )
-            if any(normalize_choice_text(part) == value_norm for part in parts):
+            if any(
+                normalize_choice_text(part) == value_norm or value_norm in normalize_choice_text(part)
+                for part in parts
+            ):
                 return True
         except Exception:
             pass

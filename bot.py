@@ -49,6 +49,7 @@ DEPARTMENTS_SHEET_NAME = "departments"
 
 INDIVIDUAL_ACCESS_COLUMN = "Кнопка - індивідуальна націнка - ТАК"
 PROMO_ACCESS_COLUMN = "Кнопка - промокод"
+CATALOG_SEARCH_ACCESS_COLUMN = "Кнопка-Пошук рідин"
 
 DEFAULT_DEPARTMENTS = [
     "Filial",
@@ -512,6 +513,7 @@ def authorize_user_session(
     role: str,
     individual_markup_access: bool = False,
     promo_access: bool = False,
+    catalog_search_access: bool = False,
 ):
     authorized_users_cache[telegram_user_id] = {
         "phone": normalize_phone(phone),
@@ -520,6 +522,7 @@ def authorize_user_session(
         "is_authorized": True,
         "individual_markup_access": bool(individual_markup_access),
         "promo_access": bool(promo_access),
+        "catalog_search_access": bool(catalog_search_access),
     }
 
 
@@ -551,6 +554,13 @@ def has_promo_access(user_id: int) -> bool:
     return bool(data.get("promo_access", False))
 
 
+def has_catalog_search_access(user_id: int) -> bool:
+    if is_admin(user_id):
+        return True
+    data = authorized_users_cache.get(user_id, {})
+    return bool(data.get("catalog_search_access", False))
+
+
 def refresh_user_role_from_google(user_id: int):
     rows, _ws = load_allowed_users()
 
@@ -560,6 +570,7 @@ def refresh_user_role_from_google(user_id: int):
         if row_tg == str(user_id) and is_active_flag(row.get("is_active", "")):
             individual_flag = normalize_text(row.get(INDIVIDUAL_ACCESS_COLUMN, "")).upper()
             promo_flag = normalize_text(row.get(PROMO_ACCESS_COLUMN, "")).upper()
+            catalog_search_flag = normalize_text(row.get(CATALOG_SEARCH_ACCESS_COLUMN, "")).upper()
 
             authorize_user_session(
                 telegram_user_id=user_id,
@@ -568,6 +579,7 @@ def refresh_user_role_from_google(user_id: int):
                 role=row.get("role", ""),
                 individual_markup_access=individual_flag in ("TRUE", "ТАК"),
                 promo_access=promo_flag in ("TRUE", "ТАК"),
+                catalog_search_access=catalog_search_flag in ("TRUE", "ТАК"),
             )
             return True
 
@@ -585,6 +597,7 @@ def find_allowed_user_by_phone(phone: str):
         if row_phone == normalized_phone and is_active_flag(row_is_active):
             individual_flag = normalize_text(row.get(INDIVIDUAL_ACCESS_COLUMN, "")).upper()
             promo_flag = normalize_text(row.get(PROMO_ACCESS_COLUMN, "")).upper()
+            catalog_search_flag = normalize_text(row.get(CATALOG_SEARCH_ACCESS_COLUMN, "")).upper()
 
             return {
                 "phone": row_phone,
@@ -593,6 +606,7 @@ def find_allowed_user_by_phone(phone: str):
                 "telegram_id": normalize_text(row.get("telegram_id", "")),
                 "individual_markup_access": individual_flag in ("TRUE", "ТАК"),
                 "promo_access": promo_flag in ("TRUE", "ТАК"),
+                "catalog_search_access": catalog_search_flag in ("TRUE", "ТАК"),
             }
 
     return None
@@ -636,10 +650,12 @@ def get_admin_telegram_ids() -> List[int]:
 def get_main_keyboard(user_id: int):
     keyboard = [
         [KeyboardButton(text="Оновити довідники")],
-        [KeyboardButton(text="🔎 Пошук рідин")],
         [KeyboardButton(text="Розрахувати ціну")],
         [KeyboardButton(text="📝 Опитувальник")],
     ]
+
+    if has_catalog_search_access(user_id):
+        keyboard.insert(1, [KeyboardButton(text="🔎 Пошук рідин")])
 
     if has_individual_markup_access(user_id):
         keyboard.append([KeyboardButton(text="💰 Індивідуальна націнка")])
@@ -650,6 +666,7 @@ def get_main_keyboard(user_id: int):
     if is_admin(user_id):
         keyboard.append([KeyboardButton(text="👤 Нові заявки")])
         keyboard.append([KeyboardButton(text="🖥 Режим CRM")])
+        keyboard.append([KeyboardButton(text="🔎 Доступ до пошуку рідин")])
         keyboard.append([KeyboardButton(text="⚙️ Доступ до індивідуальної націнки")])
         keyboard.append([KeyboardButton(text="🎟 Доступ до промокодів")])
 
@@ -826,6 +843,7 @@ def append_allowed_user_from_request(request_row: Dict[str, Any]):
         "last_name": "",
         "department": "",
         PROMO_ACCESS_COLUMN: "",
+        CATALOG_SEARCH_ACCESS_COLUMN: "",
     }
 
     row = []
@@ -1021,6 +1039,10 @@ async def show_access_managers(message: types.Message, access_type: str, page: i
         column_name = PROMO_ACCESS_COLUMN
         title = "🎟 Промокод"
         step = "promo_access_select_manager"
+    elif access_type == "liquids":
+        column_name = CATALOG_SEARCH_ACCESS_COLUMN
+        title = "🔎 Пошук рідин"
+        step = "liquids_access_select_manager"
     else:
         await message.answer("❌ Невідомий тип доступу", reply_markup=get_main_keyboard(message.from_user.id))
         return
@@ -1983,6 +2005,7 @@ async def handle_message(message: types.Message):
                 role=allowed_user.get("role", ""),
                 individual_markup_access=allowed_user.get("individual_markup_access", False),
                 promo_access=allowed_user.get("promo_access", False),
+                catalog_search_access=allowed_user.get("catalog_search_access", False),
             )
 
             await message.answer(
@@ -2025,6 +2048,9 @@ async def handle_message(message: types.Message):
         return
 
     if text == "🔎 пошук рідин":
+        if not has_catalog_search_access(user_id):
+            await message.answer("❌ Немає доступу", reply_markup=get_main_keyboard(user_id))
+            return
         await start_liquids_search(message)
         return
 
@@ -2085,6 +2111,13 @@ async def handle_message(message: types.Message):
         await show_access_managers(message, access_type="promo")
         return
 
+    if "доступ до пошуку рідин" in text:
+        if not is_admin(user_id):
+            await message.answer("❌ Ця дія доступна лише адміну.", reply_markup=get_main_keyboard(user_id))
+            return
+        await show_access_managers(message, access_type="liquids")
+        return
+
     if step == "individual_markup":
         index = state.get("field_index", 0)
 
@@ -2139,7 +2172,7 @@ async def handle_message(message: types.Message):
         )
         return
 
-    if step in ("individual_access_select_manager", "promo_access_select_manager"):
+    if step in ("individual_access_select_manager", "promo_access_select_manager", "liquids_access_select_manager"):
         if not is_admin(user_id):
             await message.answer("❌ Ця дія доступна лише адміну.", reply_markup=get_main_keyboard(user_id))
             return
@@ -2209,6 +2242,8 @@ async def handle_message(message: types.Message):
                     authorized_users_cache[user_id]["individual_markup_access"] = True
                 if access_column == PROMO_ACCESS_COLUMN:
                     authorized_users_cache[user_id]["promo_access"] = True
+                if access_column == CATALOG_SEARCH_ACCESS_COLUMN:
+                    authorized_users_cache[user_id]["catalog_search_access"] = True
 
             await message.answer("✅ Доступ оновлено")
             await show_access_managers(message, access_type=access_type, page=current_page, query=current_query)
@@ -2221,6 +2256,8 @@ async def handle_message(message: types.Message):
                     authorized_users_cache[user_id]["individual_markup_access"] = False
                 if access_column == PROMO_ACCESS_COLUMN:
                     authorized_users_cache[user_id]["promo_access"] = False
+                if access_column == CATALOG_SEARCH_ACCESS_COLUMN:
+                    authorized_users_cache[user_id]["catalog_search_access"] = False
 
             await message.answer("✅ Доступ оновлено")
             await show_access_managers(message, access_type=access_type, page=current_page, query=current_query)

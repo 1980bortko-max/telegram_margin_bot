@@ -57,14 +57,16 @@ class CrmSession:
         return self._wait
 
     def _create_driver(self):
+        headless = is_catalog_search_headless()
         options = Options()
         options.add_argument("--disable-blink-features=AutomationControlled")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--start-maximized")
 
-        if is_catalog_search_headless():
+        if headless:
             options.add_argument("--headless=new")
+            options.add_argument("--window-size=1920,1600")
 
         profile_dir = Path(CATALOG_CHROME_PROFILE_DIR).expanduser()
         if not profile_dir.is_absolute():
@@ -77,9 +79,14 @@ class CrmSession:
 
         if CHROMEDRIVER_PATH and os.path.exists(CHROMEDRIVER_PATH):
             service = Service(CHROMEDRIVER_PATH)
-            return webdriver.Chrome(service=service, options=options)
+            driver = webdriver.Chrome(service=service, options=options)
+        else:
+            driver = webdriver.Chrome(options=options)
 
-        return webdriver.Chrome(options=options)
+        if headless:
+            driver.set_window_size(1920, 1600)
+
+        return driver
 
     def close(self) -> None:
         if self._driver is not None:
