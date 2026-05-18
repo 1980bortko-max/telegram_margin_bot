@@ -25,9 +25,10 @@ from catalogs import (
 from margin_logic import calculate_margin_result
 from survey_logic import start_survey, handle_survey_message, is_survey_active
 from telegram_catalog_bot.catalog_search.liquids_search import (
+    LiquidsAppliedFiltersReport,
     LiquidsFilters,
     format_products_for_telegram,
-    search_liquids,
+    search_liquids_with_report,
 )
 from telegram_catalog_bot.catalog_search.crm_session import reset_crm_session
 from telegram_catalog_bot.catalog_search.runtime_settings import (
@@ -1304,6 +1305,41 @@ def normalize_viscosity(value: str) -> Optional[str]:
     return None
 
 
+def liquids_report_title(field: str) -> str:
+    if field == "client_group":
+        return "Клієнтська група"
+    return LIQUIDS_SEARCH_TITLES.get(field, field)
+
+
+def format_liquids_requested_report(filters: LiquidsFilters) -> str:
+    fields = ["client_group"] + LIQUIDS_SEARCH_FIELDS
+    lines = ["📋 Шукаємо за опитуванням:"]
+    for field in fields:
+        value = getattr(filters, field, "")
+        lines.append(f"{liquids_report_title(field)}: {value or 'пропущено'}")
+    return "\n".join(lines)
+
+
+def format_liquids_applied_report(report: LiquidsAppliedFiltersReport) -> str:
+    fields = ["client_group"] + LIQUIDS_SEARCH_FIELDS
+    lines = ["✅ Що внесено в CRM перед натисканням «Пошук»:"]
+
+    for field in fields:
+        title = liquids_report_title(field)
+        requested = report.requested.get(field, "")
+
+        if not requested:
+            lines.append(f"{title}: пропущено")
+        elif field in report.applied:
+            lines.append(f"{title}: {report.applied[field]}")
+        elif field in report.skipped:
+            lines.append(f"{title}: не внесено ({report.skipped[field]})")
+        else:
+            lines.append(f"{title}: не застосовано")
+
+    return "\n".join(lines)
+
+
 def get_liquids_client_groups() -> List[str]:
     catalogs = load_catalogs()
     source = catalogs.get("oms_price_groups", []) or catalogs.get("calc_client_groups", [])
@@ -1449,11 +1485,32 @@ async def run_liquids_search(message: types.Message):
     user_id = message.from_user.id
     state = user_state.get(user_id, {})
     filters = LiquidsFilters.from_dict(state.get("answers", {}))
+    loop = asyncio.get_running_loop()
+    applied_report_sent = False
 
+    await message.answer(format_liquids_requested_report(filters))
     await message.answer("🔎 Шукаю рідини в Autofun CRM...")
 
+    def on_filters_applied(report: LiquidsAppliedFiltersReport):
+        nonlocal applied_report_sent
+        if applied_report_sent:
+            return
+        applied_report_sent = True
+        future = asyncio.run_coroutine_threadsafe(
+            message.answer(format_liquids_applied_report(report)),
+            loop,
+        )
+        try:
+            future.result(timeout=10)
+        except Exception:
+            pass
+
     try:
-        products = await asyncio.to_thread(search_liquids, filters)
+        result = await asyncio.to_thread(
+            search_liquids_with_report,
+            filters,
+            on_filters_applied=on_filters_applied,
+        )
     except Exception as e:
         user_state.pop(user_id, None)
         error_text = str(e).splitlines()[0].strip() or e.__class__.__name__
@@ -1463,6 +1520,10 @@ async def run_liquids_search(message: types.Message):
         )
         return
 
+    if not applied_report_sent:
+        await message.answer(format_liquids_applied_report(result.report))
+
+    products = result.products
     for chunk in format_products_for_telegram(products):
         await message.answer(chunk)
 

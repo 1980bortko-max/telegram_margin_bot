@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
-from dataclasses import dataclass
-from typing import Dict, List
+from dataclasses import dataclass, field
+from typing import Callable, Dict, List, Optional
 
 from selenium.common.exceptions import InvalidSessionIdException
 from selenium.webdriver.common.keys import Keys
@@ -71,23 +71,50 @@ class LiquidsFilters:
         }
 
 
+@dataclass
+class LiquidsAppliedFiltersReport:
+    requested: Dict[str, str] = field(default_factory=dict)
+    applied: Dict[str, str] = field(default_factory=dict)
+    skipped: Dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
+class LiquidsSearchResult:
+    products: List[CatalogProduct]
+    report: LiquidsAppliedFiltersReport
+
+
 def search_liquids(filters: LiquidsFilters, limit: int = CATALOG_SEARCH_LIMIT) -> List[CatalogProduct]:
+    return search_liquids_with_report(filters, limit=limit).products
+
+
+def search_liquids_with_report(
+    filters: LiquidsFilters,
+    limit: int = CATALOG_SEARCH_LIMIT,
+    on_filters_applied: Optional[Callable[[LiquidsAppliedFiltersReport], None]] = None,
+) -> LiquidsSearchResult:
     session = get_crm_session()
 
     with session.lock:
         try:
-            return _search_liquids_locked(session, filters, limit)
+            return _search_liquids_locked(session, filters, limit, on_filters_applied)
         except Exception as exc:
             if not is_invalid_selenium_session(exc):
                 raise
 
             debug_log("Autofun Selenium session expired. Restart CRM driver and retry search once.", session.debug_dir)
             session.close()
-            return _search_liquids_locked(session, filters, limit)
+            return _search_liquids_locked(session, filters, limit, on_filters_applied)
 
 
-def _search_liquids_locked(session, filters: LiquidsFilters, limit: int) -> List[CatalogProduct]:
+def _search_liquids_locked(
+    session,
+    filters: LiquidsFilters,
+    limit: int,
+    on_filters_applied: Optional[Callable[[LiquidsAppliedFiltersReport], None]] = None,
+) -> LiquidsSearchResult:
     driver = session.driver
+    report = LiquidsAppliedFiltersReport(requested=filters.active_values())
 
     debug_log(f"Liquids search start: {filters.active_values()}", session.debug_dir)
     session.open_liquids_from_sidebar()
@@ -95,11 +122,18 @@ def _search_liquids_locked(session, filters: LiquidsFilters, limit: int) -> List
 
     if filters.client_group:
         session.set_client_group(filters.client_group)
+        report.applied["client_group"] = filters.client_group
 
     save_debug_screenshot(driver, session.debug_dir, "liquids_before_filters")
 
-    apply_liquids_filters(driver, filters, session.debug_dir)
+    filter_report = apply_liquids_filters(driver, filters, session.debug_dir)
+    report.applied.update(filter_report.applied)
+    report.skipped.update(filter_report.skipped)
+
     save_debug_screenshot(driver, session.debug_dir, "liquids_after_filters")
+
+    if on_filters_applied:
+        on_filters_applied(report)
 
     search_button = find_liquids_search_button(driver)
     if not safe_click(driver, search_button):
@@ -110,14 +144,15 @@ def _search_liquids_locked(session, filters: LiquidsFilters, limit: int) -> List
 
     products = parse_products(driver, limit=limit)
     debug_log(f"Liquids search parsed products: {len(products)}", session.debug_dir)
-    return products[:limit]
+    return LiquidsSearchResult(products=products[:limit], report=report)
 
 
 def is_invalid_selenium_session(exc: Exception) -> bool:
     return isinstance(exc, InvalidSessionIdException) or "invalid session id" in str(exc).lower()
 
 
-def apply_liquids_filters(driver, filters: LiquidsFilters, debug_dir) -> None:
+def apply_liquids_filters(driver, filters: LiquidsFilters, debug_dir) -> LiquidsAppliedFiltersReport:
+    report = LiquidsAppliedFiltersReport(requested=filters.filter_values())
     values = filters.filter_values()
     for field_name, value in values.items():
         debug_log(f"Set Liquids filter: {field_name}={value}", debug_dir)
@@ -131,8 +166,11 @@ def apply_liquids_filters(driver, filters: LiquidsFilters, debug_dir) -> None:
                 raise
             close_optional_filter(driver)
             debug_log(f"Skip unknown Liquids brand: {value}. Error: {exc}", debug_dir)
+            report.skipped[field_name] = "не знайдено в CRM, пошук продовжено без бренду"
             continue
+        report.applied[field_name] = value
         debug_log(f"Set Liquids filter OK: {field_name}", debug_dir)
+    return report
 
 
 def close_optional_filter(driver) -> None:
