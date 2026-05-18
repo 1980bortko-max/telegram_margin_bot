@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 
 import asyncio
+import fcntl
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from aiogram import Bot, Dispatcher, types
@@ -42,6 +44,7 @@ VAT_RATE = 0.20
 
 user_state: Dict[int, Dict[str, Any]] = {}
 authorized_users_cache: Dict[int, Dict[str, Any]] = {}
+bot_lock_file = None
 
 INDIVIDUAL_SHEET_NAME = "Лист1"
 PROMO_SHEET_NAME = "PROMO"
@@ -2492,6 +2495,15 @@ async def handle_message(message: types.Message):
 
 
 async def main():
+    global bot_lock_file
+
+    bot_lock_file = (Path(__file__).resolve().parent / ".bot.lock").open("w", encoding="utf-8")
+    try:
+        fcntl.flock(bot_lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        print("Telegram bot is already running. Stop the current bot before starting another one.", flush=True)
+        return
+
     await dp.start_polling(bot)
 
 
