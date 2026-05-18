@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 
+import re
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional
 
@@ -144,7 +145,15 @@ def _search_liquids_locked(
 
     products = parse_products(driver, limit=limit)
     debug_log(f"Liquids search parsed products: {len(products)}", session.debug_dir)
-    return LiquidsSearchResult(products=products[:limit], report=report)
+
+    products = products[:limit]
+    try:
+        validate_products_match_filters(products, filters, session.debug_dir)
+    except Exception:
+        save_debug_screenshot(driver, session.debug_dir, "liquids_result_validation_error")
+        raise
+
+    return LiquidsSearchResult(products=products, report=report)
 
 
 def is_invalid_selenium_session(exc: Exception) -> bool:
@@ -159,18 +168,154 @@ def apply_liquids_filters(driver, filters: LiquidsFilters, debug_dir) -> Liquids
         try:
             set_filter_value(driver, field_name, value)
         except Exception as exc:
-            if field_name != "brand":
-                close_optional_filter(driver)
-                save_debug_screenshot(driver, debug_dir, f"liquids_filter_error_{field_name}")
-                debug_log(f"Liquids filter failed: {field_name}={value}. Error: {exc}", debug_dir)
-                raise
             close_optional_filter(driver)
-            debug_log(f"Skip unknown Liquids brand: {value}. Error: {exc}", debug_dir)
-            report.skipped[field_name] = "не знайдено в CRM, пошук продовжено без бренду"
-            continue
+            save_debug_screenshot(driver, debug_dir, f"liquids_filter_error_{field_name}")
+            debug_log(f"Liquids filter failed: {field_name}={value}. Error: {exc}", debug_dir)
+            raise RuntimeError(
+                f"Не вдалося застосувати фільтр {filter_title(field_name)}: {value}"
+            ) from exc
         report.applied[field_name] = value
         debug_log(f"Set Liquids filter OK: {field_name}", debug_dir)
     return report
+
+
+def filter_title(field_name: str) -> str:
+    titles = {
+        "client_group": "Клієнтська група",
+        "brand": "Бренд",
+        "liquid_type": "Тип",
+        "viscosity": "В'язкість",
+        "volume_from": "Об'єм від",
+        "volume_to": "Об'єм до",
+        "article": "Номер / артикул",
+    }
+    return titles.get(field_name, field_name)
+
+
+def validate_products_match_filters(
+    products: List[CatalogProduct],
+    filters: LiquidsFilters,
+    debug_dir,
+) -> None:
+    if not products:
+        return
+
+    mismatches: List[str] = []
+
+    for product in products[: min(len(products), 10)]:
+        mismatch = product_filter_mismatch(product, filters)
+        if mismatch:
+            mismatches.append(mismatch)
+
+    if not mismatches:
+        return
+
+    active = filters.active_values()
+    sample = [
+        {
+            "article": product.article,
+            "name": product.name,
+            "brand": product.brand,
+            "type": product.liquid_type,
+            "viscosity": product.viscosity,
+            "capacity": product.capacity,
+        }
+        for product in products[:5]
+    ]
+    debug_log(
+        f"Liquids result validation failed. Filters={active}. Sample={sample}. "
+        f"Mismatch={mismatches[0]}",
+        debug_dir,
+    )
+    raise RuntimeError(
+        "CRM повернула товари не за заданими фільтрами. "
+        f"Пошук зупинено: {mismatches[0]}"
+    )
+
+
+def product_filter_mismatch(product: CatalogProduct, filters: LiquidsFilters) -> Optional[str]:
+    product_title = " ".join(part for part in (product.article, product.name) if part).strip()
+
+    if filters.brand and not (
+        text_matches(filters.brand, product.brand)
+        or text_contains(product_title, filters.brand)
+    ):
+        return f"бренд очікували {filters.brand}, отримали {product.brand or 'порожньо'}"
+
+    if filters.liquid_type and not text_matches(filters.liquid_type, product.liquid_type):
+        return f"тип очікували {filters.liquid_type}, отримали {product.liquid_type or 'порожньо'}"
+
+    if filters.viscosity and not text_matches(filters.viscosity, product.viscosity):
+        return f"в'язкість очікували {filters.viscosity}, отримали {product.viscosity or 'порожньо'}"
+
+    capacity_mismatch = validate_capacity(product.capacity, filters.volume_from, filters.volume_to)
+    if capacity_mismatch:
+        return capacity_mismatch
+
+    if filters.article:
+        haystack = " ".join(part for part in (product.article, product.name) if part)
+        if not text_contains(haystack, filters.article):
+            return f"номер / артикул очікували {filters.article}, отримали {product_title or 'порожньо'}"
+
+    return None
+
+
+def normalize_compare_text(value: str) -> str:
+    text = value or ""
+    for dash in ("\u2010", "\u2011", "\u2012", "\u2013", "\u2014", "\u2212"):
+        text = text.replace(dash, "-")
+    text = text.lower()
+    return re.sub(r"[^0-9a-zа-яіїєґ]+", "", text)
+
+
+def text_matches(expected: str, actual: str) -> bool:
+    expected_norm = normalize_compare_text(expected)
+    actual_norm = normalize_compare_text(actual)
+    return bool(expected_norm and expected_norm == actual_norm)
+
+
+def text_contains(actual: str, expected: str) -> bool:
+    expected_norm = normalize_compare_text(expected)
+    actual_norm = normalize_compare_text(actual)
+    return bool(expected_norm and expected_norm in actual_norm)
+
+
+def parse_decimal(value: str) -> Optional[float]:
+    if not value:
+        return None
+    match = re.search(r"\d+(?:[.,]\d+)?", str(value))
+    if not match:
+        return None
+    try:
+        return float(match.group(0).replace(",", "."))
+    except ValueError:
+        return None
+
+
+def validate_capacity(capacity: str, volume_from: str, volume_to: str) -> Optional[str]:
+    minimum = parse_decimal(volume_from)
+    maximum = parse_decimal(volume_to)
+    if minimum is None and maximum is None:
+        return None
+
+    actual = parse_decimal(capacity)
+    expected = []
+    if minimum is not None:
+        expected.append(f"від {minimum:g}")
+    if maximum is not None:
+        expected.append(f"до {maximum:g}")
+    expected_text = " ".join(expected)
+
+    if actual is None:
+        return f"об'єм очікували {expected_text}, отримали {capacity or 'порожньо'}"
+
+    tolerance = 0.001
+    if minimum is not None and actual + tolerance < minimum:
+        return f"об'єм очікували {expected_text}, отримали {capacity}"
+    if maximum is not None and actual - tolerance > maximum:
+        return f"об'єм очікували {expected_text}, отримали {capacity}"
+
+    return None
 
 
 def close_optional_filter(driver) -> None:
