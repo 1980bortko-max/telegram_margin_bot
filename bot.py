@@ -2,6 +2,7 @@
 
 import asyncio
 import fcntl
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -2497,14 +2498,24 @@ async def handle_message(message: types.Message):
 async def main():
     global bot_lock_file
 
-    bot_lock_file = (Path(__file__).resolve().parent / ".bot.lock").open("w", encoding="utf-8")
+    project_dir = Path(__file__).resolve().parent
+    pid_path = project_dir / ".bot.pid"
+
+    bot_lock_file = (project_dir / ".bot.lock").open("w", encoding="utf-8")
     try:
         fcntl.flock(bot_lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         print("Telegram bot is already running. Stop the current bot before starting another one.", flush=True)
         return
 
-    await dp.start_polling(bot)
+    pid_path.write_text(str(os.getpid()), encoding="utf-8")
+    try:
+        await dp.start_polling(bot)
+    finally:
+        try:
+            pid_path.unlink(missing_ok=True)
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

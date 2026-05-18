@@ -2,6 +2,7 @@
 .venv/
 .crm_chrome_profile/
 .bot.lock
+.bot.pid
 catalog_search_debug/
 __pycache__/
 *.py[cod]
