@@ -1491,13 +1491,16 @@ async def run_liquids_search(message: types.Message):
     await message.answer(format_liquids_requested_report(filters))
     await message.answer("🔎 Шукаю рідини в Autofun CRM...")
 
+    async def send_applied_filters_report(report: LiquidsAppliedFiltersReport):
+        await message.answer(format_liquids_applied_report(report))
+
     def on_filters_applied(report: LiquidsAppliedFiltersReport):
         nonlocal applied_report_sent
         if applied_report_sent:
             return
         applied_report_sent = True
         future = asyncio.run_coroutine_threadsafe(
-            message.answer(format_liquids_applied_report(report)),
+            send_applied_filters_report(report),
             loop,
         )
         try:
