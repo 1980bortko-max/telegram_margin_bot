@@ -52,12 +52,14 @@ stop_existing_bot() {
   PID="$(tr -dc '0-9' < "$PID_FILE")"
   if [ -z "$PID" ]; then
     rm -f "$PID_FILE" "$LOCK_FILE"
+    stop_catalog_browser
     return
   fi
 
   if ! kill -0 "$PID" 2>/dev/null; then
     echo "Old bot PID file found, but process is not running."
     rm -f "$PID_FILE" "$LOCK_FILE"
+    stop_catalog_browser
     return
   fi
 
