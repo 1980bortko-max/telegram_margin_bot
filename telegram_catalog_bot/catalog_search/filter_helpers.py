@@ -192,6 +192,22 @@ def clickable_ancestor(driver, el):
         return el
 
 
+def visible_text(driver, el) -> str:
+    try:
+        return (
+            driver.execute_script(
+                "return arguments[0].innerText || arguments[0].textContent || '';",
+                el,
+            )
+            or ""
+        )
+    except Exception:
+        try:
+            return el.text or ""
+        except Exception:
+            return ""
+
+
 def quasar_get_value(driver, inp) -> str:
     try:
         return (inp.get_attribute("value") or "").strip()
@@ -313,7 +329,7 @@ def find_filter_field(driver, filter_name: str, timeout: int = 10):
                 const panel = arguments[0];
                 const targets = arguments[1];
                 const norm = (value) => String(value || '')
-                    .replace(/[–—]/g, '-')
+                    .replace(/[\\u2010\\u2011\\u2012\\u2013\\u2014\\u2212]/g, '-')
                     .trim()
                     .replace(/\\s+/g, ' ')
                     .toLowerCase();
@@ -365,7 +381,7 @@ def find_client_group_field(driver, timeout: int = 10):
                 """
                 const targets = arguments[0];
                 const norm = (value) => String(value || '')
-                    .replace(/[–—]/g, '-')
+                    .replace(/[\\u2010\\u2011\\u2012\\u2013\\u2014\\u2212]/g, '-')
                     .trim()
                     .replace(/\\s+/g, ' ')
                     .toLowerCase();
@@ -427,7 +443,10 @@ def xpath_literal(value: str) -> str:
 
 
 def normalize_choice_text(value: str) -> str:
-    return " ".join((value or "").replace("–", "-").replace("—", "-").split()).lower()
+    text = value or ""
+    for dash in ("\u2010", "\u2011", "\u2012", "\u2013", "\u2014", "\u2212"):
+        text = text.replace(dash, "-")
+    return " ".join(text.split()).lower()
 
 
 def _candidate_input_xpath(labels: Iterable[str], placeholders: Iterable[str]) -> str:
@@ -497,7 +516,7 @@ def find_article_field(driver, timeout: int = 10):
                 """
                 const panel = arguments[0];
                 const norm = (value) => String(value || '')
-                    .replace(/[–—]/g, '-')
+                    .replace(/[\\u2010\\u2011\\u2012\\u2013\\u2014\\u2212]/g, '-')
                     .trim()
                     .replace(/\\s+/g, ' ')
                     .toLowerCase();
@@ -734,9 +753,9 @@ def click_matching_quasar_option(driver, value: str) -> bool:
     while time.time() < end_at:
         try:
             options = driver.find_elements(By.CSS_SELECTOR, option_css)
-            visible = [opt for opt in options if opt.is_displayed() and normalize_choice_text(opt.text)]
+            visible = [opt for opt in options if opt.is_displayed() and normalize_choice_text(visible_text(driver, opt))]
             for option in visible:
-                if normalize_choice_text(option.text) == value_norm:
+                if normalize_choice_text(visible_text(driver, option)) == value_norm:
                     if safe_click(driver, clickable_ancestor(driver, option)):
                         time.sleep(0.25)
                         return True
@@ -751,7 +770,7 @@ def click_matching_quasar_option(driver, value: str) -> bool:
         """
         const target = arguments[0];
         const norm = (value) => String(value || '')
-            .replace(/[–—]/g, '-')
+            .replace(/[\\u2010\\u2011\\u2012\\u2013\\u2014\\u2212]/g, '-')
             .trim()
             .replace(/\\s+/g, ' ')
             .toLowerCase();
@@ -799,12 +818,29 @@ def scroll_and_click_matching_quasar_option(driver, value_norm: str) -> bool:
         ".q-item[role='option']"
     )
 
+    try:
+        driver.execute_script(
+            """
+            for (const el of document.querySelectorAll('.q-menu .q-virtual-scroll, .q-menu .scroll, .q-menu')) {
+                const rect = el.getBoundingClientRect();
+                const style = window.getComputedStyle(el);
+                if (rect.width > 0 && rect.height > 0 &&
+                    style.display !== 'none' && style.visibility !== 'hidden' &&
+                    el.scrollHeight > el.clientHeight + 5) {
+                    el.scrollTop = 0;
+                }
+            }
+            """
+        )
+    except Exception:
+        pass
+
     for _ in range(30):
         try:
             options = driver.find_elements(By.CSS_SELECTOR, option_css)
-            visible = [opt for opt in options if opt.is_displayed() and normalize_choice_text(opt.text)]
+            visible = [opt for opt in options if opt.is_displayed() and normalize_choice_text(visible_text(driver, opt))]
             for option in visible:
-                if normalize_choice_text(option.text) == value_norm:
+                if normalize_choice_text(visible_text(driver, option)) == value_norm:
                     if safe_click(driver, clickable_ancestor(driver, option)):
                         time.sleep(0.25)
                         return True
@@ -854,6 +890,13 @@ def select_quasar_option(driver, field, value: str, timeout: float = 5.0) -> Non
                 return
             if press_open_select_option(driver, field, value) and wait_field_choice(driver, field, value):
                 return
+            if type_into_open_quasar_search(driver, field, value):
+                if click_matching_quasar_option(driver, value) and wait_field_choice(driver, field, value):
+                    return
+                if press_open_select_option(driver, field, value) and wait_field_choice(driver, field, value):
+                    return
+                if press_enter_on_open_select(driver, field) and wait_field_choice(driver, field, value):
+                    return
 
         try:
             arrows = field.find_elements(By.CSS_SELECTOR, ".q-field__append, .q-select__dropdown-icon")
@@ -864,12 +907,29 @@ def select_quasar_option(driver, field, value: str, timeout: float = 5.0) -> Non
                         return
                     if press_open_select_option(driver, field, value) and wait_field_choice(driver, field, value):
                         return
+                    if type_into_open_quasar_search(driver, field, value):
+                        if click_matching_quasar_option(driver, value) and wait_field_choice(driver, field, value):
+                            return
+                        if press_open_select_option(driver, field, value) and wait_field_choice(driver, field, value):
+                            return
+                        if press_enter_on_open_select(driver, field) and wait_field_choice(driver, field, value):
+                            return
         except Exception:
             pass
 
         time.sleep(0.2)
 
     raise RuntimeError(f"Не вдалося вибрати значення зі списку: {value}")
+
+
+def press_enter_on_open_select(driver, field) -> bool:
+    try:
+        target = driver.switch_to.active_element or field
+        target.send_keys(Keys.ENTER)
+        time.sleep(0.3)
+        return True
+    except Exception:
+        return False
 
 
 def press_open_select_option(driver, field, value: str) -> bool:
@@ -880,10 +940,14 @@ def press_open_select_option(driver, field, value: str) -> bool:
         ".q-virtual-scroll__content .q-item, [role='listbox'] .q-item, "
         ".q-item[role='option']",
     )
-    visible = [option for option in options if option.is_displayed() and normalize_choice_text(option.text)]
+    visible = [
+        option
+        for option in options
+        if option.is_displayed() and normalize_choice_text(visible_text(driver, option))
+    ]
 
     for index, option in enumerate(visible):
-        if normalize_choice_text(option.text) != value_norm:
+        if normalize_choice_text(visible_text(driver, option)) != value_norm:
             continue
 
         try:

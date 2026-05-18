@@ -125,6 +125,9 @@ def apply_liquids_filters(driver, filters: LiquidsFilters, debug_dir) -> None:
             set_filter_value(driver, field_name, value)
         except Exception as exc:
             if field_name != "brand":
+                close_optional_filter(driver)
+                save_debug_screenshot(driver, debug_dir, f"liquids_filter_error_{field_name}")
+                debug_log(f"Liquids filter failed: {field_name}={value}. Error: {exc}", debug_dir)
                 raise
             close_optional_filter(driver)
             debug_log(f"Skip unknown Liquids brand: {value}. Error: {exc}", debug_dir)
