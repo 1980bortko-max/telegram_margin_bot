@@ -1124,6 +1124,10 @@ def set_filter_value(driver, filter_name: str, value: str) -> None:
     if filter_name == "article":
         set_article_value(driver, value)
         return
+    if filter_name == "brand":
+        field = find_filter_field(driver, filter_name)
+        select_searchable_quasar_option(driver, field, value)
+        return
     if filter_name in ("liquid_type", "viscosity"):
         field = find_filter_field(driver, filter_name)
         select_quasar_option(driver, field, value)

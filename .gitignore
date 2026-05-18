@@ -1,9 +1,10 @@
 .env
 .venv/
-.crm_chrome_profile/
+.crm_chrome_profile*/
 .bot.lock
 .bot.pid
 catalog_search_debug/
+*.log
 __pycache__/
 *.py[cod]
 .DS_Store
