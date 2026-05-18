@@ -67,6 +67,8 @@ class CrmSession:
         if headless:
             options.add_argument("--headless=new")
             options.add_argument("--window-size=1920,1600")
+            options.add_argument("--disable-gpu")
+            options.add_argument("--force-device-scale-factor=1")
 
         profile_dir = Path(CATALOG_CHROME_PROFILE_DIR).expanduser()
         if not profile_dir.is_absolute():
@@ -223,9 +225,62 @@ class CrmSession:
         debug_log(f"Set Autofun client group: {client_group}", self.debug_dir)
         field = find_client_group_field(driver)
         select_searchable_quasar_option(driver, field, client_group, timeout=12.0)
+        if is_catalog_search_headless():
+            self._confirm_client_group_update_if_needed()
         wait_overlay_gone(driver, 15)
         time.sleep(0.4)
         debug_log("Set Autofun client group OK", self.debug_dir)
+
+    def _confirm_client_group_update_if_needed(self) -> None:
+        driver = self.driver
+        labels = SELECTORS["shell"]["client_group_update_buttons"]
+        end_at = time.time() + 8
+
+        while time.time() < end_at:
+            try:
+                clicked = driver.execute_script(
+                    """
+                    const labels = arguments[0].map((value) => String(value).toLowerCase());
+                    const visible = (el) => {
+                        if (!el) return false;
+                        const rect = el.getBoundingClientRect();
+                        const style = window.getComputedStyle(el);
+                        return rect.width > 0 && rect.height > 0 &&
+                            style.display !== 'none' && style.visibility !== 'hidden';
+                    };
+                    const candidates = Array.from(document.querySelectorAll(
+                        '.q-snackbar button, .q-snackbar .q-btn, ' +
+                        '.q-notification button, .q-notification .q-btn, ' +
+                        '[role="alert"] button, [role="alert"] .q-btn, button, .q-btn'
+                    )).filter(visible);
+                    const button = candidates.find((el) => {
+                        const text = String(el.innerText || el.textContent || '').trim().toLowerCase();
+                        return labels.some((label) => text.includes(label));
+                    });
+                    if (!button) {
+                        return false;
+                    }
+                    button.scrollIntoView({ block: 'center' });
+                    for (const eventName of ['pointerdown', 'mousedown', 'mouseup', 'click']) {
+                        button.dispatchEvent(new MouseEvent(eventName, {
+                            bubbles: true,
+                            cancelable: true,
+                            view: window
+                        }));
+                    }
+                    return true;
+                    """,
+                    labels,
+                )
+                if clicked:
+                    debug_log("Confirm Autofun client group update in headless mode", self.debug_dir)
+                    wait_overlay_gone(driver, 20)
+                    time.sleep(2.0)
+                    return
+            except Exception as exc:
+                debug_log(f"Ignore client group update confirmation error: {exc}", self.debug_dir)
+                return
+            time.sleep(0.25)
 
     def _try_accept_cookies(self) -> None:
         try:

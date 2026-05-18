@@ -34,6 +34,14 @@ SELECTORS: Dict[str, Any] = {
             "[contains(normalize-space(),'Рідини') or contains(normalize-space(),'Liquids')]"
         ),
         "client_group_labels": ["Client group", "Клієнтська група", "Клиентская группа"],
+        "client_group_update_buttons": [
+            "NEU LADEN",
+            "RELOAD",
+            "UPDATE",
+            "ОНОВИТИ",
+            "ОБНОВИТЬ",
+            "ОБНОВИТИ",
+        ],
     },
     "login": {
         "af_ids_button": "//button[.//div[contains(text(),'AF IDS')] or contains(.,'AF IDS')]",
