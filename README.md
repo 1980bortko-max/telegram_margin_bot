@@ -117,3 +117,20 @@ sudo systemctl start telegram-margin-bot
 sudo systemctl status telegram-margin-bot
 sudo journalctl -u telegram-margin-bot -f
 ```
+
+## Headless smoke tests для пошуку рідин
+
+Команды запускают Selenium-поиск в фоновом режиме:
+
+```bash
+python3 -m telegram_catalog_bot.catalog_search.headless_smoke_tests k2-engine-oil-0w40
+python3 -m telegram_catalog_bot.catalog_search.headless_smoke_tests castrol-engine-oil-0w40-1l
+python3 -m telegram_catalog_bot.catalog_search.headless_smoke_tests export-silver-castrol-engine-oil-0w40-1l
+python3 -m telegram_catalog_bot.catalog_search.headless_smoke_tests article-15f030
+```
+
+Все сценарии одной командой:
+
+```bash
+python3 -m telegram_catalog_bot.catalog_search.headless_smoke_tests all
+```
