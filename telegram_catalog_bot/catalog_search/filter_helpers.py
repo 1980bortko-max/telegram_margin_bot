@@ -11,6 +11,8 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
+from .runtime_settings import is_catalog_search_headless
+
 
 SELECTORS: Dict[str, Any] = {
     "overlay": "div.q-loading, .q-inner-loading, .loading, [role='progressbar']",
@@ -105,12 +107,20 @@ SELECTORS: Dict[str, Any] = {
                 "placeholders": ["Специфікації", "Склад", "Composition", "Specification", "Specifications"],
             },
             "article": {
-                "labels": ["Номер", "Артикул", "Article", "Number"],
-                "placeholders": ["Номер", "Артикул", "Article", "Number"],
+                "labels": ["# Number", "# Номер", "Номер", "Артикул", "Article", "Number"],
+                "placeholders": ["# Number", "# Номер", "Номер", "Артикул", "Article", "Number"],
             },
         },
     },
 }
+
+QUASAR_OPTION_CSS = (
+    ".q-menu .q-item, "
+    ".q-menu [role='option'], "
+    ".q-virtual-scroll__content .q-item, "
+    "[role='listbox'] .q-item, "
+    ".q-item[role='option']"
+)
 
 
 def debug_log(message: str, debug_dir: Optional[Path] = None) -> None:
@@ -294,9 +304,16 @@ def quasar_set_value(driver, inp, value: str, timeout: float = 2.0) -> None:
         """
         const el = arguments[0];
         const val = arguments[1];
+        el.removeAttribute('readonly');
+        el.removeAttribute('disabled');
         el.focus();
-        el.value = val;
-        el.dispatchEvent(new Event('input', { bubbles: true }));
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+        if (setter) {
+            setter.call(el, val);
+        } else {
+            el.value = val;
+        }
+        el.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: val }));
         el.dispatchEvent(new Event('change', { bubbles: true }));
         el.dispatchEvent(new Event('blur', { bubbles: true }));
         """,
@@ -328,6 +345,7 @@ def find_filter_field(driver, filter_name: str, timeout: int = 10):
                 """
                 const panel = arguments[0];
                 const targets = arguments[1];
+                const filterName = arguments[2];
                 const norm = (value) => String(value || '')
                     .replace(/[\\u2010\\u2011\\u2012\\u2013\\u2014\\u2212]/g, '-')
                     .trim()
@@ -341,11 +359,37 @@ def find_filter_field(driver, filter_name: str, timeout: int = 10):
                 };
                 const fields = Array.from(panel.querySelectorAll('.q-field, .q-select, .q-input'))
                     .filter(visible);
+                if (filterName === 'liquid_type') {
+                    const labelElement = Array.from(panel.querySelectorAll('*'))
+                        .filter(visible)
+                        .find((el) => norm(el.innerText || el.textContent || '') === 'type');
+                    const labelField = labelElement && labelElement.closest('.q-field, .q-select, .q-input');
+                    if (labelField && visible(labelField)) {
+                        return labelField;
+                    }
+                    const typeField = fields.find((field) => {
+                        const text = norm(field.innerText || field.textContent || '');
+                        return (text === 'type' || text.startsWith('type ')) &&
+                            !text.includes('specification') &&
+                            !text.includes('viscos') &&
+                            !text.includes('brand') &&
+                            !text.includes('color');
+                    });
+                    if (typeField) {
+                        return typeField;
+                    }
+                }
                 for (const field of fields) {
                     const label = field.querySelector('.q-field__label');
                     const input = field.querySelector('input');
+                    const labelNorm = norm(label && label.innerText);
+                    if (targets.includes(labelNorm)) {
+                        return field;
+                    }
+                }
+                for (const field of fields) {
+                    const input = field.querySelector('input');
                     const values = [
-                        label && label.innerText,
                         input && input.placeholder,
                         input && input.getAttribute('aria-label')
                     ].map(norm);
@@ -357,6 +401,7 @@ def find_filter_field(driver, filter_name: str, timeout: int = 10):
                 """,
                 panel,
                 targets,
+                filter_name,
             )
             if field and field.is_displayed():
                 return field
@@ -547,11 +592,31 @@ def find_article_field(driver, timeout: int = 10):
                         prefix && prefix.innerText,
                     ].map(norm).filter(Boolean);
 
+                    if (values.some((value) =>
+                        value === 'від' ||
+                        value === 'до' ||
+                        value === 'from' ||
+                        value === 'to' ||
+                        value.includes("об'єм") ||
+                        value.includes('обʼєм') ||
+                        value.includes('volume') ||
+                        value.includes('capacity')
+                    )) {
+                        return false;
+                    }
+
+                    if (values.some((value) =>
+                        value === '# number' ||
+                        value === '# номер' ||
+                        value.includes('# number') ||
+                        value.includes('# номер')
+                    )) {
+                        return true;
+                    }
+
                     return values.some((value) =>
                         value === 'number' ||
-                        value === '# number' ||
                         value === 'номер' ||
-                        value === '# номер' ||
                         value === 'артикул' ||
                         value.includes('number') ||
                         value.includes('номер') ||
@@ -643,16 +708,19 @@ def set_article_value(driver, value: str) -> None:
         inp,
     )
 
-    inp.send_keys(value)
-    driver.execute_script(
-        """
-        const el = arguments[0];
-        el.dispatchEvent(new Event('input', { bubbles: true }));
-        el.dispatchEvent(new Event('change', { bubbles: true }));
-        el.dispatchEvent(new Event('blur', { bubbles: true }));
-        """,
-        inp,
-    )
+    if is_catalog_search_headless():
+        _js_set_text_input(driver, inp, value)
+    else:
+        inp.send_keys(value)
+        driver.execute_script(
+            """
+            const el = arguments[0];
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+            el.dispatchEvent(new Event('blur', { bubbles: true }));
+            """,
+            inp,
+        )
 
     end_at = time.time() + 2
     while time.time() < end_at:
@@ -670,8 +738,8 @@ def set_article_value(driver, value: str) -> None:
 def find_article_input(driver, timeout: int = 10):
     end_at = time.time() + timeout
     strict_xpath = _candidate_input_xpath(
-        ["Номер", "# Номер", "Артикул", "Number", "# Number", "Article"],
-        ["Номер", "# Номер", "Артикул", "Number", "# Number", "Article"],
+        ["# Number", "# Номер"],
+        ["# Number", "# Номер"],
     )
 
     while time.time() < end_at:
@@ -736,25 +804,79 @@ def find_filter_input(driver, filter_name: str, timeout: int = 10):
     raise RuntimeError(f"Filter input not found: {filter_name}. Last error: {last_error}")
 
 
+def visible_quasar_options(driver) -> List[Any]:
+    options = driver.find_elements(By.CSS_SELECTOR, QUASAR_OPTION_CSS)
+    return [
+        opt
+        for opt in options
+        if opt.is_displayed() and normalize_choice_text(visible_text(driver, opt))
+    ]
+
+
+def best_option_match(driver, value: str):
+    value_norm = normalize_choice_text(value)
+    if not value_norm:
+        return None, ""
+
+    visible = visible_quasar_options(driver)
+    exact = [
+        option for option in visible
+        if normalize_choice_text(visible_text(driver, option)) == value_norm
+    ]
+    if exact:
+        option = exact[0]
+        return option, visible_text(driver, option).strip()
+
+    contains = [
+        option for option in visible
+        if value_norm in normalize_choice_text(visible_text(driver, option))
+        or normalize_choice_text(visible_text(driver, option)) in value_norm
+    ]
+    if contains:
+        contains.sort(key=lambda option: len(normalize_choice_text(visible_text(driver, option))))
+        option = contains[0]
+        return option, visible_text(driver, option).strip()
+
+    return None, ""
+
+
+def click_best_quasar_option(driver, value: str, timeout: float = 4.0) -> str:
+    end_at = time.time() + timeout
+
+    while time.time() < end_at:
+        try:
+            option, selected_text = best_option_match(driver, value)
+            if option and safe_click(driver, clickable_ancestor(driver, option)):
+                time.sleep(0.3)
+                return selected_text or value
+        except Exception:
+            pass
+        time.sleep(0.1)
+
+    return ""
+
+
+def close_open_quasar_popup(driver) -> None:
+    try:
+        driver.switch_to.active_element.send_keys(Keys.ESCAPE)
+    except Exception:
+        pass
+    try:
+        driver.execute_script("document.body.click();")
+    except Exception:
+        pass
+
+
 def click_matching_quasar_option(driver, value: str) -> bool:
     value_norm = normalize_choice_text(value)
     if not value_norm:
         return False
 
-    option_css = (
-        ".q-menu .q-item, "
-        ".q-menu [role='option'], "
-        ".q-virtual-scroll__content .q-item, "
-        "[role='listbox'] .q-item, "
-        ".q-item[role='option']"
-    )
     end_at = time.time() + 3
 
     while time.time() < end_at:
         try:
-            options = driver.find_elements(By.CSS_SELECTOR, option_css)
-            visible = [opt for opt in options if opt.is_displayed() and normalize_choice_text(visible_text(driver, opt))]
-            for option in visible:
+            for option in visible_quasar_options(driver):
                 if normalize_choice_text(visible_text(driver, option)) == value_norm:
                     if safe_click(driver, clickable_ancestor(driver, option)):
                         time.sleep(0.25)
@@ -810,14 +932,6 @@ def click_matching_quasar_option(driver, value: str) -> bool:
 
 
 def scroll_and_click_matching_quasar_option(driver, value_norm: str) -> bool:
-    option_css = (
-        ".q-menu .q-item, "
-        ".q-menu [role='option'], "
-        ".q-virtual-scroll__content .q-item, "
-        "[role='listbox'] .q-item, "
-        ".q-item[role='option']"
-    )
-
     try:
         driver.execute_script(
             """
@@ -837,9 +951,7 @@ def scroll_and_click_matching_quasar_option(driver, value_norm: str) -> bool:
 
     for _ in range(30):
         try:
-            options = driver.find_elements(By.CSS_SELECTOR, option_css)
-            visible = [opt for opt in options if opt.is_displayed() and normalize_choice_text(visible_text(driver, opt))]
-            for option in visible:
+            for option in visible_quasar_options(driver):
                 if normalize_choice_text(visible_text(driver, option)) == value_norm:
                     if safe_click(driver, clickable_ancestor(driver, option)):
                         time.sleep(0.25)
@@ -934,19 +1046,8 @@ def press_enter_on_open_select(driver, field) -> bool:
 
 def press_open_select_option(driver, field, value: str) -> bool:
     value_norm = normalize_choice_text(value)
-    options = driver.find_elements(
-        By.CSS_SELECTOR,
-        ".q-menu .q-item, .q-menu [role='option'], "
-        ".q-virtual-scroll__content .q-item, [role='listbox'] .q-item, "
-        ".q-item[role='option']",
-    )
-    visible = [
-        option
-        for option in options
-        if option.is_displayed() and normalize_choice_text(visible_text(driver, option))
-    ]
 
-    for index, option in enumerate(visible):
+    for index, option in enumerate(visible_quasar_options(driver)):
         if normalize_choice_text(visible_text(driver, option)) != value_norm:
             continue
 
@@ -959,6 +1060,264 @@ def press_open_select_option(driver, field, value: str) -> bool:
             return True
         except Exception:
             return False
+
+    return False
+
+
+def select_searchable_quasar_option_headless(
+    driver,
+    field,
+    value: str,
+    timeout: float = 12.0,
+    allow_typed_value: bool = False,
+) -> str:
+    value = (value or "").strip()
+    end_at = time.time() + timeout
+    last_selected = ""
+
+    while time.time() < end_at:
+        close_open_quasar_popup(driver)
+        try:
+            driver.execute_script("arguments[0].scrollIntoView({block:'center'});", field)
+        except Exception:
+            pass
+
+        targets = [field]
+        try:
+            targets.extend(
+                arrow for arrow in field.find_elements(By.CSS_SELECTOR, ".q-field__append, .q-select__dropdown-icon")
+                if arrow.is_displayed()
+            )
+        except Exception:
+            pass
+
+        for target in targets:
+            close_open_quasar_popup(driver)
+            if not safe_click(driver, target):
+                continue
+            selected = try_select_open_quasar_value(driver, field, value, allow_typed_value)
+            if selected:
+                return selected
+
+        time.sleep(0.25)
+
+    raise RuntimeError(f"Не вдалося знайти і вибрати значення зі списку: {value}")
+
+
+def try_select_open_quasar_value(driver, field, value: str, allow_typed_value: bool) -> str:
+    time.sleep(0.35)
+    wait_quasar_options(driver, timeout=3.0)
+    selected = click_best_quasar_option(driver, value, timeout=2.0)
+    if selected and wait_selected_field_choice(driver, field, selected, timeout=3.0):
+        return selected
+    if selected and wait_selected_field_choice(driver, field, value, timeout=3.0):
+        return selected
+
+    search_input = find_open_quasar_search_input(driver, field)
+    if search_input:
+        type_into_quasar_search_input(driver, search_input, value)
+        wait_quasar_options(driver, timeout=4.0)
+        selected = click_best_quasar_option(driver, value, timeout=4.0)
+        if selected and wait_selected_field_choice(driver, field, selected, timeout=4.0):
+            return selected
+        if selected and wait_selected_field_choice(driver, field, value, timeout=4.0):
+            return selected
+        try:
+            search_input.send_keys(Keys.ENTER)
+            search_input.send_keys(Keys.TAB)
+            time.sleep(0.3)
+        except Exception:
+            pass
+        if allow_typed_value and wait_field_choice(driver, field, value, timeout=1.0):
+            return value
+
+    return ""
+
+
+def find_open_quasar_search_input(driver, field):
+    return driver.execute_script(
+        """
+        const field = arguments[0];
+        const visible = (el) => {
+            if (!el || el.tagName !== 'INPUT') return false;
+            const rect = el.getBoundingClientRect();
+            const style = window.getComputedStyle(el);
+            return rect.width > 0 && rect.height > 0 &&
+                style.display !== 'none' && style.visibility !== 'hidden' && !el.disabled;
+        };
+        const candidates = [
+            (
+                field.contains(document.activeElement) ||
+                document.activeElement?.closest?.('.q-menu, [role="listbox"], .q-virtual-scroll__content')
+            ) ? document.activeElement : null,
+            ...Array.from(document.querySelectorAll(
+                '.q-menu input, [role="listbox"] input, .q-virtual-scroll__content input'
+            )),
+            ...Array.from(field.querySelectorAll('input'))
+        ].filter(visible);
+        return candidates.find((el) => !el.readOnly) || candidates[0] || null;
+        """,
+        field,
+    )
+
+
+def type_into_quasar_search_input(driver, search_input, value: str) -> None:
+    driver.execute_script(
+        """
+        const el = arguments[0];
+        el.removeAttribute('readonly');
+        el.removeAttribute('disabled');
+        el.focus();
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+        if (setter) {
+            setter.call(el, '');
+        } else {
+            el.value = '';
+        }
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        """,
+        search_input,
+    )
+
+    try:
+        safe_click(driver, search_input)
+        search_input.send_keys(Keys.COMMAND, "a")
+        search_input.send_keys(Keys.CONTROL, "a")
+        search_input.send_keys(Keys.BACKSPACE)
+        search_input.send_keys(value)
+        time.sleep(0.35)
+        typed_value = driver.execute_script("return arguments[0].value || '';", search_input) or ""
+        if normalize_choice_text(value) in normalize_choice_text(typed_value):
+            return
+    except Exception:
+        pass
+
+    driver.execute_script(
+        """
+        const el = arguments[0];
+        const value = arguments[1];
+        el.removeAttribute('readonly');
+        el.removeAttribute('disabled');
+        el.focus();
+
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+        if (setter) {
+            setter.call(el, '');
+            setter.call(el, value);
+        } else {
+            el.value = value;
+        }
+
+        el.dispatchEvent(new InputEvent('input', {
+            bubbles: true,
+            cancelable: true,
+            inputType: 'insertText',
+            data: value
+        }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        """,
+        search_input,
+        value,
+    )
+    time.sleep(0.5)
+
+
+def clear_filter_value(driver, filter_name: str) -> None:
+    try:
+        if filter_name == "article":
+            inp = find_article_input(driver, timeout=2)
+        else:
+            inp = find_filter_input(driver, filter_name, timeout=2)
+        quasar_clear_input(driver, inp)
+        close_open_quasar_popup(driver)
+    except Exception:
+        close_open_quasar_popup(driver)
+
+
+def wait_quasar_options(driver, timeout: float = 4.0) -> bool:
+    end_at = time.time() + timeout
+    while time.time() < end_at:
+        try:
+            if visible_quasar_options(driver):
+                return True
+        except Exception:
+            pass
+        time.sleep(0.1)
+    return False
+
+
+def read_field_choice(driver, field) -> str:
+    try:
+        parts = driver.execute_script(
+            """
+            const root = arguments[0];
+            const parts = [];
+            const push = (value) => {
+                const text = String(value || '').trim();
+                if (text) parts.push(...text.split(/\\n+/));
+            };
+            root.querySelectorAll('.q-chip, .q-chip__content, .q-field__native').forEach((el) => {
+                push(el.innerText || el.textContent || el.value || '');
+            });
+            root.querySelectorAll('input').forEach((el) => push(el.value || ''));
+            return parts;
+            """,
+            field,
+        )
+        values = [part.strip() for part in parts if part and part.strip()]
+        return values[-1] if values else ""
+    except Exception:
+        return ""
+
+
+def selected_field_parts(driver, field) -> List[str]:
+    try:
+        parts = driver.execute_script(
+            """
+            const root = arguments[0];
+            const parts = [];
+            const push = (value) => {
+                const text = String(value || '').trim();
+                if (text) parts.push(...text.split(/\\n+/));
+            };
+            root.querySelectorAll('.q-chip, .q-chip__content').forEach((el) => {
+                push(el.innerText || el.textContent || '');
+            });
+            root.querySelectorAll('.q-field__native').forEach((el) => {
+                if (el.tagName === 'INPUT' && el === document.activeElement) {
+                    return;
+                }
+                push(el.innerText || el.textContent || el.value || '');
+            });
+            return parts;
+            """,
+            field,
+        )
+        return [part.strip() for part in parts if part and part.strip()]
+    except Exception:
+        return []
+
+
+def wait_selected_field_choice(driver, field, value: str, timeout: float = 3.0) -> bool:
+    value_norm = normalize_choice_text(value)
+    end_at = time.time() + timeout
+
+    while time.time() < end_at:
+        try:
+            if visible_quasar_options(driver):
+                time.sleep(0.1)
+                continue
+        except Exception:
+            pass
+
+        parts = selected_field_parts(driver, field)
+        if any(
+            normalize_choice_text(part) == value_norm or value_norm in normalize_choice_text(part)
+            for part in parts
+        ):
+            return True
+        time.sleep(0.1)
 
     return False
 
@@ -1031,8 +1390,14 @@ def type_into_open_quasar_search(driver, field, value: str) -> bool:
         search_input.send_keys(Keys.COMMAND, "a")
         search_input.send_keys(Keys.BACKSPACE)
         search_input.send_keys(value)
-        time.sleep(0.5)
-        return True
+        time.sleep(0.2)
+        typed_value = (
+            driver.execute_script("return arguments[0].value || '';", search_input)
+            or ""
+        )
+        if normalize_choice_text(value) in normalize_choice_text(typed_value):
+            time.sleep(0.3)
+            return True
     except Exception:
         pass
 
@@ -1117,20 +1482,70 @@ def find_liquids_search_button(driver, timeout: int = 10):
     raise RuntimeError("Не знайшов кнопку Пошук на сторінці Рідини")
 
 
-def set_filter_value(driver, filter_name: str, value: str) -> None:
+def _js_set_text_input(driver, inp, value: str) -> None:
+    driver.execute_script(
+        """
+        const el = arguments[0];
+        const val = arguments[1];
+        el.removeAttribute('readonly');
+        el.removeAttribute('disabled');
+        el.focus();
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+        if (setter) {
+            setter.call(el, '');
+            setter.call(el, val);
+        } else {
+            el.value = val;
+        }
+        el.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: val }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        el.dispatchEvent(new Event('blur', { bubbles: true }));
+        """,
+        inp,
+        value,
+    )
+    time.sleep(0.3)
+
+
+def set_filter_value(driver, filter_name: str, value: str) -> str:
     value = (value or "").strip()
     if not value:
-        return
+        return ""
     if filter_name == "article":
         set_article_value(driver, value)
-        return
+        return value
     if filter_name == "brand":
         field = find_filter_field(driver, filter_name)
+        if is_catalog_search_headless():
+            # Scroll field near top of viewport so dropdown opens with room below
+            try:
+                driver.execute_script(
+                    """
+                    const rect = arguments[0].getBoundingClientRect();
+                    if (rect.top > 300 || rect.top < 0) {
+                        window.scrollBy(0, rect.top - 100);
+                    }
+                    """,
+                    field,
+                )
+            except Exception:
+                pass
         select_searchable_quasar_option(driver, field, value)
-        return
+        return read_field_choice(driver, field) or value
     if filter_name in ("liquid_type", "viscosity"):
         field = find_filter_field(driver, filter_name)
+        if is_catalog_search_headless():
+            return select_searchable_quasar_option_headless(
+                driver,
+                field,
+                value,
+                allow_typed_value=True,
+            )
         select_quasar_option(driver, field, value)
-        return
+        return read_field_choice(driver, field) or value
     inp = find_filter_input(driver, filter_name)
-    quasar_set_value(driver, inp, value)
+    if is_catalog_search_headless():
+        _js_set_text_input(driver, inp, value)
+    else:
+        quasar_set_value(driver, inp, value)
+    return value

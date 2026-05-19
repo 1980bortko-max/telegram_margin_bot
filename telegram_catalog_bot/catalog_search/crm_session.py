@@ -165,6 +165,37 @@ class CrmSession:
         wait_overlay_gone(self.driver, 15)
         time.sleep(0.5)
 
+    def open_liquids_page_fresh(self) -> None:
+        """Navigate directly to the liquids page URL. Always gives a clean filter state.
+        Re-authenticates automatically if the session has expired."""
+        url = f"{AUTOFUN_BASE_URL.rstrip('/')}/console/liquid"
+        debug_log(f"Open liquids page fresh: {url}", self.debug_dir)
+        self.driver.get(url)
+        try:
+            self.wait.until(
+                EC.any_of(
+                    EC.url_contains("/console/liquid"),
+                    EC.url_contains("/login"),
+                )
+            )
+        except TimeoutException:
+            save_debug_screenshot(self.driver, self.debug_dir, "liquids_fresh_timeout")
+            raise RuntimeError("Timeout navigating to liquids page")
+
+        if "/login" in (self.driver.current_url or ""):
+            debug_log("Session expired on liquids navigation, re-authenticating", self.debug_dir)
+            self.login()
+            self.driver.get(url)
+            try:
+                self.wait.until(EC.url_contains("/console/liquid"))
+            except TimeoutException:
+                save_debug_screenshot(self.driver, self.debug_dir, "liquids_fresh_relogin_timeout")
+                raise RuntimeError("Timeout opening liquids page after re-login")
+
+        wait_overlay_gone(self.driver, 15)
+        time.sleep(0.5)
+        save_debug_screenshot(self.driver, self.debug_dir, "liquids_fresh_opened")
+
     def open_liquids_from_sidebar(self) -> None:
         self.ensure_ready()
         driver = self.driver

@@ -119,6 +119,10 @@ LIQUIDS_SEARCH_FIELDS = [
     "article",
 ]
 
+LIQUIDS_PARAMS_FIELDS = ["brand", "liquid_type", "viscosity", "volume_from", "volume_to"]
+LIQUIDS_ARTICLE_FIELDS = ["article"]
+LIQUIDS_VISCOSITY_TYPES = {"ENGINE OIL", "TRANSMISSION OIL"}
+
 LIQUIDS_SEARCH_TITLES = {
     "brand": "Бренд",
     "liquid_type": "Тип",
@@ -241,6 +245,15 @@ crm_mode_keyboard = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="🌙 Фоновий режим CRM")],
         [KeyboardButton(text="👁 Видимий режим CRM")],
+        [KeyboardButton(text="🔙 Головне меню")],
+    ],
+    resize_keyboard=True
+)
+
+liquids_search_mode_keyboard = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="📄 По артикулу")],
+        [KeyboardButton(text="🔧 По параметрах")],
         [KeyboardButton(text="🔙 Головне меню")],
     ],
     resize_keyboard=True
@@ -1311,8 +1324,8 @@ def liquids_report_title(field: str) -> str:
     return LIQUIDS_SEARCH_TITLES.get(field, field)
 
 
-def format_liquids_requested_report(filters: LiquidsFilters) -> str:
-    fields = ["client_group"] + LIQUIDS_SEARCH_FIELDS
+def format_liquids_requested_report(filters: LiquidsFilters, field_list: Optional[List[str]] = None) -> str:
+    fields = ["client_group"] + (field_list if field_list is not None else LIQUIDS_PARAMS_FIELDS)
     lines = ["📋 Шукаємо за опитуванням:"]
     for field in fields:
         value = getattr(filters, field, "")
@@ -1320,8 +1333,8 @@ def format_liquids_requested_report(filters: LiquidsFilters) -> str:
     return "\n".join(lines)
 
 
-def format_liquids_applied_report(report: LiquidsAppliedFiltersReport) -> str:
-    fields = ["client_group"] + LIQUIDS_SEARCH_FIELDS
+def format_liquids_applied_report(report: LiquidsAppliedFiltersReport, field_list: Optional[List[str]] = None) -> str:
+    fields = ["client_group"] + (field_list if field_list is not None else LIQUIDS_PARAMS_FIELDS)
     lines = ["✅ Що внесено в CRM перед натисканням «Пошук»:"]
 
     for field in fields:
@@ -1333,7 +1346,7 @@ def format_liquids_applied_report(report: LiquidsAppliedFiltersReport) -> str:
         elif field in report.applied:
             lines.append(f"{title}: {report.applied[field]}")
         elif field in report.skipped:
-            lines.append(f"{title}: не внесено ({report.skipped[field]})")
+            lines.append(f"{title}: не внесено, {report.skipped[field]}")
         else:
             lines.append(f"{title}: не застосовано")
 
@@ -1413,11 +1426,35 @@ async def handle_liquids_client_group_answer(message: types.Message, raw_text: s
         return
 
     user_state[user_id] = {
-        "step": "catalog_liquids_filter",
-        "field_index": 0,
+        "step": "catalog_liquids_search_mode",
         "answers": {"client_group": selected},
     }
     await message.answer(f"✅ Клієнтська група: {selected}")
+    await message.answer(
+        "🔎 Пошук рідин\n\nОберіть тип пошуку:",
+        reply_markup=liquids_search_mode_keyboard
+    )
+
+
+async def handle_liquids_search_mode_answer(message: types.Message, raw_text: str, text: str):
+    user_id = message.from_user.id
+    state = user_state.get(user_id, {})
+
+    if text == "📄 по артикулу":
+        field_list = LIQUIDS_ARTICLE_FIELDS
+    elif text == "🔧 по параметрах":
+        field_list = LIQUIDS_PARAMS_FIELDS
+    else:
+        await message.answer(
+            "❌ Оберіть тип пошуку кнопкою.",
+            reply_markup=liquids_search_mode_keyboard
+        )
+        return
+
+    state["step"] = "catalog_liquids_filter"
+    state["field_index"] = 0
+    state["field_list"] = field_list
+    user_state[user_id] = state
     await ask_liquids_filter(message)
 
 
@@ -1425,12 +1462,23 @@ async def ask_liquids_filter(message: types.Message):
     user_id = message.from_user.id
     state = user_state.get(user_id, {})
     index = state.get("field_index", 0)
+    field_list = state.get("field_list", LIQUIDS_PARAMS_FIELDS)
 
-    if index >= len(LIQUIDS_SEARCH_FIELDS):
+    if index >= len(field_list):
         await run_liquids_search(message)
         return
 
-    field = LIQUIDS_SEARCH_FIELDS[index]
+    field = field_list[index]
+
+    # Auto-skip viscosity when liquid type doesn't use it
+    if field == "viscosity":
+        liquid_type = state.get("answers", {}).get("liquid_type", "")
+        if liquid_type.upper() not in LIQUIDS_VISCOSITY_TYPES:
+            state["field_index"] = index + 1
+            user_state[user_id] = state
+            await ask_liquids_filter(message)
+            return
+
     prompt = "Оберіть значення кнопкою або натисніть «⏭ Пропустити»."
     if field not in ("liquid_type", "viscosity"):
         prompt = "Введи значення або натисни «⏭ Пропустити»."
@@ -1446,12 +1494,13 @@ async def handle_liquids_filter_answer(message: types.Message, raw_text: str, te
     user_id = message.from_user.id
     state = user_state.get(user_id, {})
     index = state.get("field_index", 0)
+    field_list = state.get("field_list", LIQUIDS_PARAMS_FIELDS)
 
-    if index >= len(LIQUIDS_SEARCH_FIELDS):
+    if index >= len(field_list):
         await run_liquids_search(message)
         return
 
-    field = LIQUIDS_SEARCH_FIELDS[index]
+    field = field_list[index]
     value = "" if is_skip_filter_answer(text) else normalize_text(raw_text)
 
     if field == "liquid_type" and value:
@@ -1485,14 +1534,15 @@ async def run_liquids_search(message: types.Message):
     user_id = message.from_user.id
     state = user_state.get(user_id, {})
     filters = LiquidsFilters.from_dict(state.get("answers", {}))
+    field_list = state.get("field_list", LIQUIDS_PARAMS_FIELDS)
     loop = asyncio.get_running_loop()
     applied_report_sent = False
 
-    await message.answer(format_liquids_requested_report(filters))
+    await message.answer(format_liquids_requested_report(filters, field_list=field_list))
     await message.answer("🔎 Шукаю рідини в Autofun CRM...")
 
     async def send_applied_filters_report(report: LiquidsAppliedFiltersReport):
-        await message.answer(format_liquids_applied_report(report))
+        await message.answer(format_liquids_applied_report(report, field_list=field_list))
 
     def on_filters_applied(report: LiquidsAppliedFiltersReport):
         nonlocal applied_report_sent
@@ -1524,7 +1574,7 @@ async def run_liquids_search(message: types.Message):
         return
 
     if not applied_report_sent:
-        await message.answer(format_liquids_applied_report(result.report))
+        await message.answer(format_liquids_applied_report(result.report, field_list=field_list))
 
     products = result.products
     for chunk in format_products_for_telegram(products):
@@ -2125,6 +2175,10 @@ async def handle_message(message: types.Message):
 
     if step == "catalog_liquids_client_group":
         await handle_liquids_client_group_answer(message, raw_text, text)
+        return
+
+    if step == "catalog_liquids_search_mode":
+        await handle_liquids_search_mode_answer(message, raw_text, text)
         return
 
     if step == "catalog_liquids_filter":

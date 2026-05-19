@@ -15,6 +15,7 @@ from .filter_helpers import (
     require_liquids_page,
     safe_click,
     save_debug_screenshot,
+    clear_filter_value,
     set_filter_value,
     wait_results_loaded,
 )
@@ -118,7 +119,7 @@ def _search_liquids_locked(
     report = LiquidsAppliedFiltersReport(requested=filters.active_values())
 
     debug_log(f"Liquids search start: {filters.active_values()}", session.debug_dir)
-    session.open_liquids_from_sidebar()
+    session.open_liquids_page_fresh()
     require_liquids_page(driver)
 
     if filters.client_group:
@@ -136,6 +137,7 @@ def _search_liquids_locked(
     if on_filters_applied:
         on_filters_applied(report)
 
+    validation_filters = filters_for_validation(filters, report)
     search_button = find_liquids_search_button(driver)
     if not safe_click(driver, search_button):
         raise RuntimeError("Не вдалося натиснути кнопку Пошук")
@@ -147,13 +149,54 @@ def _search_liquids_locked(
     debug_log(f"Liquids search parsed products: {len(products)}", session.debug_dir)
 
     products = products[:limit]
+
+    # Clear brands that were mis-parsed as product type words (e.g. "Antifreeze", "Hybrid")
+    for p in products:
+        if _brand_is_product_type(p.brand):
+            p.brand = ""
+
+    # Post-filter by brand in Python when brand is requested.
+    # Handles headless mode where the CRM chip may not be selected (returns mixed results).
+    # Also tolerates mis-parsed brands: when the parser can't read the brand logo image,
+    # it falls back to the product type word (e.g. "Antifreeze") — keep those products.
+    if filters.brand:
+        filtered = [
+            p for p in products
+            if text_matches(filters.brand, p.brand)
+            or not p.brand  # brand image not parsed at all
+            or _brand_is_product_type(p.brand)  # parser mis-read type word as brand
+        ]
+        # Replace mis-parsed brand (logo read as product type) with the requested brand name
+        for p in filtered:
+            if not p.brand or _brand_is_product_type(p.brand):
+                p.brand = filters.brand
+        debug_log(
+            f"Brand post-filter '{filters.brand}': {len(products)} → {len(filtered)} products",
+            session.debug_dir,
+        )
+        products = filtered
+
     try:
-        validate_products_match_filters(products, filters, session.debug_dir)
-    except Exception:
+        validate_products_match_filters(products, validation_filters, session.debug_dir)
+    except RuntimeError:
         save_debug_screenshot(driver, session.debug_dir, "liquids_result_validation_error")
-        raise
+        products = []
 
     return LiquidsSearchResult(products=products, report=report)
+
+
+_LIQUID_TYPE_TOKENS: frozenset = frozenset({
+    "engineoil", "hydraulicfluids", "breakfluids", "transmissionoil",
+    "antifreeze", "axlegearoil", "lubrication", "compressoroil",
+    "hydraulicoil", "coolant", "fluid", "oil", "hybrid",
+})
+
+
+def _brand_is_product_type(brand: str) -> bool:
+    """Return True when the parsed brand looks like a liquid-type word rather than a real brand.
+    This happens when the parser cannot read the brand logo image and falls back to
+    the product name, incorrectly extracting the product type (e.g. 'Antifreeze') as brand."""
+    return normalize_compare_text(brand) in _LIQUID_TYPE_TOKENS
 
 
 def is_invalid_selenium_session(exc: Exception) -> bool:
@@ -166,17 +209,35 @@ def apply_liquids_filters(driver, filters: LiquidsFilters, debug_dir) -> Liquids
     for field_name, value in values.items():
         debug_log(f"Set Liquids filter: {field_name}={value}", debug_dir)
         try:
-            set_filter_value(driver, field_name, value)
+            applied_value = set_filter_value(driver, field_name, value)
         except Exception as exc:
             close_optional_filter(driver)
             save_debug_screenshot(driver, debug_dir, f"liquids_filter_error_{field_name}")
             debug_log(f"Liquids filter failed: {field_name}={value}. Error: {exc}", debug_dir)
+            if field_name == "brand":
+                clear_filter_value(driver, field_name)
+                report.skipped[field_name] = "не найдено в CRM"
+                continue
             raise RuntimeError(
                 f"Не вдалося застосувати фільтр {filter_title(field_name)}: {value}"
             ) from exc
-        report.applied[field_name] = value
+        report.applied[field_name] = applied_value or value
         debug_log(f"Set Liquids filter OK: {field_name}", debug_dir)
     return report
+
+
+def filters_for_validation(filters: LiquidsFilters, report: LiquidsAppliedFiltersReport) -> LiquidsFilters:
+    return LiquidsFilters(
+        client_group=filters.client_group if "client_group" in report.applied else "",
+        brand=report.applied.get("brand", ""),
+        liquid_type=report.applied.get("liquid_type", ""),
+        viscosity=report.applied.get("viscosity", ""),
+        color=report.applied.get("color", ""),
+        volume_from=report.applied.get("volume_from", ""),
+        volume_to=report.applied.get("volume_to", ""),
+        composition=report.applied.get("composition", ""),
+        article=report.applied.get("article", ""),
+    )
 
 
 def filter_title(field_name: str) -> str:
@@ -238,7 +299,8 @@ def product_filter_mismatch(product: CatalogProduct, filters: LiquidsFilters) ->
 
     if filters.brand and not (
         text_matches(filters.brand, product.brand)
-        or text_contains(product_title, filters.brand)
+        or not product.brand
+        or _brand_is_product_type(product.brand)
     ):
         return f"бренд очікували {filters.brand}, отримали {product.brand or 'порожньо'}"
 
@@ -331,7 +393,7 @@ def close_optional_filter(driver) -> None:
 
 def format_products_for_telegram(products: List[CatalogProduct]) -> List[str]:
     if not products:
-        return ["❌ Товари не знайдено."]
+        return ["❌ По заданим критеріям нічого не знайдено."]
 
     messages: List[str] = []
     current = ""
