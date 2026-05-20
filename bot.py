@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 
 import asyncio
-import fcntl
+import sys
+if sys.platform != "win32":
+    import fcntl
 import os
 from datetime import datetime
 from pathlib import Path
@@ -2620,11 +2622,12 @@ async def main():
     pid_path = project_dir / ".bot.pid"
 
     bot_lock_file = (project_dir / ".bot.lock").open("w", encoding="utf-8")
-    try:
-        fcntl.flock(bot_lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        print("Telegram bot is already running. Stop the current bot before starting another one.", flush=True)
-        return
+    if sys.platform != "win32":
+        try:
+            fcntl.flock(bot_lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            print("Telegram bot is already running. Stop the current bot before starting another one.", flush=True)
+            return
 
     pid_path.write_text(str(os.getpid()), encoding="utf-8")
     try:
