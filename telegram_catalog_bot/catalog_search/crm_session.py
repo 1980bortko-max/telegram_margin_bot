@@ -89,7 +89,12 @@ class CrmSession:
             service = Service(CHROMEDRIVER_PATH)
             driver = webdriver.Chrome(service=service, options=options)
         else:
-            driver = webdriver.Chrome(options=options)
+            try:
+                from webdriver_manager.chrome import ChromeDriverManager
+                service = Service(ChromeDriverManager().install())
+                driver = webdriver.Chrome(service=service, options=options)
+            except Exception:
+                driver = webdriver.Chrome(options=options)
 
         if headless:
             driver.set_window_size(1920, 1600)
