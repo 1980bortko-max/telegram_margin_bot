@@ -70,6 +70,8 @@ class CrmSession:
         if sys.platform == "win32":
             options.add_argument("--disable-extensions")
             options.add_argument("--disable-background-networking")
+            options.add_argument("--no-zygote")
+            options.add_argument("--disable-features=VizDisplayCompositor")
 
         if headless:
             options.add_argument("--headless=new")
