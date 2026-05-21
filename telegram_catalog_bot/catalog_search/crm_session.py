@@ -83,11 +83,12 @@ class CrmSession:
                 options.add_argument("--window-size=1920,1600")
                 options.add_argument("--force-device-scale-factor=1")
 
-        profile_dir = Path(CATALOG_CHROME_PROFILE_DIR).expanduser()
-        if not profile_dir.is_absolute():
-            profile_dir = Path.cwd() / profile_dir
-        profile_dir.mkdir(parents=True, exist_ok=True)
-        options.add_argument(f"--user-data-dir={profile_dir}")
+        if sys.platform != "win32":
+            profile_dir = Path(CATALOG_CHROME_PROFILE_DIR).expanduser()
+            if not profile_dir.is_absolute():
+                profile_dir = Path.cwd() / profile_dir
+            profile_dir.mkdir(parents=True, exist_ok=True)
+            options.add_argument(f"--user-data-dir={profile_dir}")
 
         if CHROME_BIN and os.path.exists(CHROME_BIN):
             options.binary_location = CHROME_BIN
