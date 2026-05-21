@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import asyncio
+import json
 import sys
 if sys.platform != "win32":
     import fcntl
@@ -52,6 +53,9 @@ bot_lock_file = None
 
 INDIVIDUAL_SHEET_NAME = "Лист1"
 PROMO_SHEET_NAME = "PROMO"
+PROMO_SUBSCRIBERS_FILE = "promo_subscribers.json"
+
+_promo_known_row_count: Optional[int] = None
 DEPARTMENTS_SHEET_NAME = "departments"
 
 INDIVIDUAL_ACCESS_COLUMN = "Кнопка - індивідуальна націнка - ТАК"
@@ -689,6 +693,7 @@ def get_main_keyboard(user_id: int):
         keyboard.append([KeyboardButton(text="🔎 Доступ до пошуку рідин")])
         keyboard.append([KeyboardButton(text="⚙️ Доступ до індивідуальної націнки")])
         keyboard.append([KeyboardButton(text="🎟 Доступ до промокодів")])
+        keyboard.append([KeyboardButton(text="🔔 Сповіщення промокодів")])
 
     return ReplyKeyboardMarkup(
         keyboard=keyboard,
@@ -2072,6 +2077,176 @@ async def ask_promo_question(message: types.Message):
     await message.answer(PROMO_TITLES[field])
 
 
+def load_promo_subscribers() -> List[int]:
+    try:
+        with open(PROMO_SUBSCRIBERS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return [int(x) for x in data if str(x).lstrip("-").isdigit()]
+    except Exception:
+        return []
+
+
+def save_promo_subscribers(ids: List[int]):
+    with open(PROMO_SUBSCRIBERS_FILE, "w", encoding="utf-8") as f:
+        json.dump(ids, f)
+
+
+def toggle_promo_subscriber(telegram_id: int) -> bool:
+    ids = load_promo_subscribers()
+    if telegram_id in ids:
+        ids.remove(telegram_id)
+        save_promo_subscribers(ids)
+        return False
+    ids.append(telegram_id)
+    save_promo_subscribers(ids)
+    return True
+
+
+def get_all_users_for_promo_subscription() -> List[Dict[str, Any]]:
+    rows, _ws, _headers = load_allowed_users_with_row_numbers()
+    subscribers = set(load_promo_subscribers())
+    result = []
+
+    for row in rows:
+        if not is_active_flag(row.get("is_active", "")):
+            continue
+
+        tg_str = normalize_text(row.get("telegram_id", ""))
+        tg_id = int(tg_str) if tg_str.lstrip("-").isdigit() else None
+
+        full_name = normalize_text(row.get("full_name", ""))
+        if not full_name:
+            full_name = normalize_phone(row.get("phone", "")) or tg_str
+
+        result.append({
+            "full_name": full_name,
+            "telegram_id": tg_id,
+            "subscribed": tg_id in subscribers if tg_id else False,
+        })
+
+    return result
+
+
+def build_promo_subscribers_keyboard(users: List[Dict[str, Any]], page: int = 0):
+    total = len(users)
+    total_pages = (total - 1) // PAGE_SIZE_ACCESS + 1 if total > 0 else 1
+
+    if page < 0:
+        page = 0
+    if page >= total_pages:
+        page = total_pages - 1
+
+    start = page * PAGE_SIZE_ACCESS
+    end = start + PAGE_SIZE_ACCESS
+
+    keyboard_rows = []
+    for user in users[start:end]:
+        icon = "🔔" if user.get("subscribed") else "🔕"
+        keyboard_rows.append([KeyboardButton(text=f"{icon} {user.get('full_name', '')}")])
+
+    nav_row = []
+    if page > 0:
+        nav_row.append(KeyboardButton(text="⬅️ Назад"))
+    if end < total:
+        nav_row.append(KeyboardButton(text="➡️ Далі"))
+    if nav_row:
+        keyboard_rows.append(nav_row)
+
+    keyboard_rows.append([KeyboardButton(text="🔙 Головне меню")])
+    return ReplyKeyboardMarkup(keyboard=keyboard_rows, resize_keyboard=True), total_pages
+
+
+async def show_promo_subscribers_page(message: types.Message, page: int = 0):
+    users = get_all_users_for_promo_subscription()
+
+    if not users:
+        await message.answer("❌ Немає активних користувачів.", reply_markup=get_main_keyboard(message.from_user.id))
+        return
+
+    keyboard, total_pages = build_promo_subscribers_keyboard(users, page)
+    if page < 0:
+        page = 0
+    if page >= total_pages:
+        page = total_pages - 1
+
+    user_state[message.from_user.id] = {
+        "step": "promo_subscribers_manage",
+        "page": page,
+    }
+
+    subscribed_count = sum(1 for u in users if u.get("subscribed"))
+    page_text = f"\nСторінка {page + 1} з {total_pages}" if total_pages > 1 else ""
+
+    await message.answer(
+        f"🔔 Сповіщення про нові промокоди\n"
+        f"Підписано: {subscribed_count} з {len(users)}{page_text}\n\n"
+        "🔔 — отримує сповіщення\n🔕 — не отримує",
+        reply_markup=keyboard
+    )
+
+
+def format_promo_notification(row: Dict[str, Any]) -> str:
+    def v(key: str) -> str:
+        return normalize_text(row.get(key, ""))
+
+    return (
+        "🎟 Новий запит на промокод\n\n"
+        f"🏢 Клієнт: {v('Client name')}\n"
+        f"📞 Телефон: {v('Telefon')}\n"
+        f"🆔 UID: {v('UID клієнта')}\n"
+        f"📅 Дата: {v('Date request')}\n"
+        f"👤 Менеджер: {v('Manager')}\n"
+        f"👤 Ім'я: {v('First name')}\n"
+        f"👤 Прізвище: {v('Last Name')}\n"
+        f"🏢 Департамент: {v('department')}\n"
+        f"📝 Проблема: {v('description')}\n"
+        f"⚠️ Незадоволеність: {v('level of dissatisfaction')}\n"
+        f"💸 Знижка: {v('Discount amount')}"
+    )
+
+
+def get_promo_sheet_rows() -> List[Dict[str, Any]]:
+    spreadsheet = get_individual_spreadsheet()
+    ws = spreadsheet.worksheet(PROMO_SHEET_NAME)
+    return sheet_to_dicts(ws)
+
+
+async def poll_promo_new_rows():
+    global _promo_known_row_count
+
+    try:
+        rows = await asyncio.to_thread(get_promo_sheet_rows)
+        _promo_known_row_count = len(rows)
+    except Exception:
+        _promo_known_row_count = 0
+
+    while True:
+        await asyncio.sleep(60)
+        try:
+            rows = await asyncio.to_thread(get_promo_sheet_rows)
+            current_count = len(rows)
+
+            if _promo_known_row_count is not None and current_count > _promo_known_row_count:
+                new_rows = rows[_promo_known_row_count:]
+                _promo_known_row_count = current_count
+
+                subscribers = load_promo_subscribers()
+                if not subscribers:
+                    continue
+
+                for row in new_rows:
+                    text = format_promo_notification(row)
+                    for sub_id in subscribers:
+                        try:
+                            await bot.send_message(chat_id=sub_id, text=text)
+                        except Exception:
+                            pass
+            else:
+                _promo_known_row_count = current_count
+        except Exception:
+            pass
+
+
 @dp.message()
 async def handle_message(message: types.Message):
     raw_text = message.text or ""
@@ -2243,6 +2418,13 @@ async def handle_message(message: types.Message):
         await show_access_managers(message, access_type="liquids")
         return
 
+    if "сповіщення промокодів" in text:
+        if not is_admin(user_id):
+            await message.answer("❌ Ця дія доступна лише адміну.", reply_markup=get_main_keyboard(user_id))
+            return
+        await show_promo_subscribers_page(message, page=0)
+        return
+
     if step == "individual_markup":
         index = state.get("field_index", 0)
 
@@ -2393,6 +2575,46 @@ async def handle_message(message: types.Message):
             return
 
         await message.answer("Обери дію кнопкою.", reply_markup=access_action_keyboard)
+        return
+
+    if step == "promo_subscribers_manage":
+        if not is_admin(user_id):
+            await message.answer("❌ Ця дія доступна лише адміну.", reply_markup=get_main_keyboard(user_id))
+            return
+
+        current_page = state.get("page", 0)
+
+        if text == "➡️ далі":
+            await show_promo_subscribers_page(message, current_page + 1)
+            return
+
+        if text == "⬅️ назад":
+            await show_promo_subscribers_page(message, current_page - 1)
+            return
+
+        all_users = get_all_users_for_promo_subscription()
+        selected_user = None
+        for u in all_users:
+            fn = u.get("full_name", "")
+            if raw_text in (f"🔔 {fn}", f"🔕 {fn}"):
+                selected_user = u
+                break
+
+        if not selected_user:
+            await message.answer("❌ Обери користувача кнопкою зі списку.")
+            await show_promo_subscribers_page(message, current_page)
+            return
+
+        tg_id = selected_user.get("telegram_id")
+        if not tg_id:
+            await message.answer("❌ У цього користувача немає Telegram ID.")
+            await show_promo_subscribers_page(message, current_page)
+            return
+
+        now_subscribed = toggle_promo_subscriber(tg_id)
+        status_text = "підписано 🔔" if now_subscribed else "відписано 🔕"
+        await message.answer(f"✅ {selected_user.get('full_name', '')} — {status_text}")
+        await show_promo_subscribers_page(message, current_page)
         return
 
     if text == "оновити довідники":
@@ -2631,6 +2853,7 @@ async def main():
 
     pid_path.write_text(str(os.getpid()), encoding="utf-8")
     try:
+        asyncio.create_task(poll_promo_new_rows())
         await dp.start_polling(bot)
     finally:
         try:
