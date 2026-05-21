@@ -60,23 +60,28 @@ class CrmSession:
         import sys
         headless = is_catalog_search_headless()
         options = Options()
-        options.add_argument("--disable-blink-features=AutomationControlled")
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--start-maximized")
-        options.add_argument("--disable-gpu")
-        options.add_argument("--disable-software-rasterizer")
 
         if sys.platform == "win32":
-            options.add_argument("--disable-extensions")
-            options.add_argument("--disable-background-networking")
-            options.add_argument("--no-zygote")
-            options.add_argument("--disable-features=VizDisplayCompositor")
-
-        if headless:
+            # Minimal stable set for Windows Server
+            options.add_argument("--no-sandbox")
+            options.add_argument("--disable-gpu")
+            options.add_argument("--disable-dev-shm-usage")
             options.add_argument("--headless=new")
-            options.add_argument("--window-size=1920,1600")
-            options.add_argument("--force-device-scale-factor=1")
+            options.add_argument("--window-size=1920,1080")
+            options.add_argument("--disable-extensions")
+            options.add_argument("--disable-software-rasterizer")
+        else:
+            options.add_argument("--disable-blink-features=AutomationControlled")
+            options.add_argument("--no-sandbox")
+            options.add_argument("--disable-dev-shm-usage")
+            options.add_argument("--start-maximized")
+            options.add_argument("--disable-gpu")
+            options.add_argument("--disable-software-rasterizer")
+
+            if headless:
+                options.add_argument("--headless=new")
+                options.add_argument("--window-size=1920,1600")
+                options.add_argument("--force-device-scale-factor=1")
 
         profile_dir = Path(CATALOG_CHROME_PROFILE_DIR).expanduser()
         if not profile_dir.is_absolute():
@@ -98,7 +103,7 @@ class CrmSession:
             except Exception:
                 driver = webdriver.Chrome(options=options)
 
-        if headless:
+        if headless and sys.platform != "win32":
             driver.set_window_size(1920, 1600)
 
         return driver
