@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
 
 import json
+import sys
 from pathlib import Path
 from typing import Any, Dict
 
 from config import CATALOG_SEARCH_HEADLESS
+
+# On Windows always default to headless — no display server available on Windows Server
+_WINDOWS_DEFAULT_HEADLESS = sys.platform == "win32"
 
 
 SETTINGS_FILE = "catalog_search_settings.json"
@@ -24,8 +28,9 @@ def load_catalog_search_settings() -> Dict[str, Any]:
         except Exception:
             data = {}
 
+    default_headless = _WINDOWS_DEFAULT_HEADLESS or CATALOG_SEARCH_HEADLESS
     return {
-        "headless": bool(data.get("headless", CATALOG_SEARCH_HEADLESS)),
+        "headless": bool(data.get("headless", default_headless)),
     }
 
 
