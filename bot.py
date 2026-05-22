@@ -1577,11 +1577,23 @@ async def run_liquids_search(message: types.Message):
             pass
 
     try:
-        result = await asyncio.to_thread(
-            search_liquids_with_report,
-            filters,
-            on_filters_applied=on_filters_applied,
+        result = await asyncio.wait_for(
+            asyncio.to_thread(
+                search_liquids_with_report,
+                filters,
+                on_filters_applied=on_filters_applied,
+            ),
+            timeout=120,
         )
+    except asyncio.TimeoutError:
+        user_state.pop(user_id, None)
+        from telegram_catalog_bot.catalog_search.crm_session import reset_crm_session
+        reset_crm_session()
+        await message.answer(
+            "❌ Пошук рідин перевищив ліміт часу (2 хв). Спробуй ще раз.",
+            reply_markup=get_main_keyboard(user_id)
+        )
+        return
     except Exception as e:
         user_state.pop(user_id, None)
         error_text = str(e).splitlines()[0].strip() or e.__class__.__name__
