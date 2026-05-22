@@ -671,15 +671,28 @@ def get_admin_telegram_ids() -> List[int]:
     return result
 
 
+settings_keyboard = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="Оновити довідники")],
+        [KeyboardButton(text="🖥 Режим CRM")],
+        [KeyboardButton(text="🔎 Доступ до пошуку рідин")],
+        [KeyboardButton(text="⚙️ Доступ до індивідуальної націнки")],
+        [KeyboardButton(text="🎟 Доступ до промокодів")],
+        [KeyboardButton(text="🔔 Сповіщення промокодів")],
+        [KeyboardButton(text="🔙 Головне меню")],
+    ],
+    resize_keyboard=True
+)
+
+
 def get_main_keyboard(user_id: int):
     keyboard = [
-        [KeyboardButton(text="Оновити довідники")],
         [KeyboardButton(text="Розрахувати ціну")],
         [KeyboardButton(text="📝 Опитувальник")],
     ]
 
     if has_catalog_search_access(user_id):
-        keyboard.insert(1, [KeyboardButton(text="🔎 Пошук рідин")])
+        keyboard.insert(0, [KeyboardButton(text="🔎 Пошук рідин")])
 
     if has_individual_markup_access(user_id):
         keyboard.append([KeyboardButton(text="💰 Індивідуальна націнка")])
@@ -689,11 +702,9 @@ def get_main_keyboard(user_id: int):
 
     if is_admin(user_id):
         keyboard.append([KeyboardButton(text="👤 Нові заявки")])
-        keyboard.append([KeyboardButton(text="🖥 Режим CRM")])
-        keyboard.append([KeyboardButton(text="🔎 Доступ до пошуку рідин")])
-        keyboard.append([KeyboardButton(text="⚙️ Доступ до індивідуальної націнки")])
-        keyboard.append([KeyboardButton(text="🎟 Доступ до промокодів")])
-        keyboard.append([KeyboardButton(text="🔔 Сповіщення промокодів")])
+        keyboard.append([KeyboardButton(text="⚙️ Налаштування")])
+    else:
+        keyboard.append([KeyboardButton(text="Оновити довідники")])
 
     return ReplyKeyboardMarkup(
         keyboard=keyboard,
@@ -2376,6 +2387,13 @@ async def handle_message(message: types.Message):
         await start_promo(message)
         return
 
+    if text == "⚙️ налаштування":
+        if not is_admin(user_id):
+            await message.answer("❌ Ця дія доступна лише адміну.", reply_markup=get_main_keyboard(user_id))
+            return
+        await message.answer("⚙️ Налаштування", reply_markup=settings_keyboard)
+        return
+
     if text == "🖥 режим crm":
         if not is_admin(user_id):
             await message.answer("❌ Ця дія доступна лише адміну.", reply_markup=get_main_keyboard(user_id))
@@ -2618,6 +2636,7 @@ async def handle_message(message: types.Message):
         return
 
     if text == "оновити довідники":
+        back_keyboard = settings_keyboard if is_admin(user_id) else get_main_keyboard(user_id)
         try:
             await message.answer("🔄 Оновлюю довідники...")
             catalogs = save_catalogs()
@@ -2627,15 +2646,15 @@ async def handle_message(message: types.Message):
                 error_text = "\n".join([f"❌ {e}" for e in errors])
                 await message.answer(
                     f"⚠️ Довідники оновлено, але є проблеми:\n\n{error_text}",
-                    reply_markup=get_main_keyboard(user_id)
+                    reply_markup=back_keyboard
                 )
             else:
                 await message.answer(
                     "✅ Довідники успішно оновлено",
-                    reply_markup=get_main_keyboard(user_id)
+                    reply_markup=back_keyboard
                 )
         except Exception as e:
-            await message.answer(f"❌ Помилка: {e}", reply_markup=get_main_keyboard(user_id))
+            await message.answer(f"❌ Помилка: {e}", reply_markup=back_keyboard)
         return
 
     if text == "👤 нові заявки":
