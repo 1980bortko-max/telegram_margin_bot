@@ -674,6 +674,7 @@ def get_admin_telegram_ids() -> List[int]:
 settings_keyboard = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="Оновити довідники")],
+        [KeyboardButton(text="👤 Нові заявки")],
         [KeyboardButton(text="🖥 Режим CRM")],
         [KeyboardButton(text="🔎 Доступ до пошуку рідин")],
         [KeyboardButton(text="⚙️ Доступ до індивідуальної націнки")],
@@ -701,7 +702,6 @@ def get_main_keyboard(user_id: int):
         keyboard.append([KeyboardButton(text="🎟 Промокод")])
 
     if is_admin(user_id):
-        keyboard.append([KeyboardButton(text="👤 Нові заявки")])
         keyboard.append([KeyboardButton(text="⚙️ Налаштування")])
     else:
         keyboard.append([KeyboardButton(text="Оновити довідники")])
