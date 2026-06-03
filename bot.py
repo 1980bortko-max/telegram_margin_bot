@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from aiogram import Bot, Dispatcher, types
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
 from config import TOKEN, GOOGLE_SHEET_URL, INDIVIDUAL_SHEET_URL
@@ -40,7 +41,7 @@ from telegram_catalog_bot.catalog_search.runtime_settings import (
 )
 
 
-bot = Bot(token=TOKEN)
+bot = Bot(token=TOKEN, session=AiohttpSession(timeout=90))
 dp = Dispatcher()
 
 PAGE_SIZE = 10
