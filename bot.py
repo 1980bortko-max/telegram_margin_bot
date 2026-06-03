@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.client.session.aiohttp import AiohttpSession
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 
 from config import TOKEN, GOOGLE_SHEET_URL, INDIVIDUAL_SHEET_URL
 from catalogs_storage import (
@@ -62,6 +62,9 @@ DEPARTMENTS_SHEET_NAME = "departments"
 INDIVIDUAL_ACCESS_COLUMN = "Кнопка - індивідуальна націнка - ТАК"
 PROMO_ACCESS_COLUMN = "Кнопка - промокод"
 CATALOG_SEARCH_ACCESS_COLUMN = "Кнопка-Пошук рідин"
+PROFILE_FIRST_NAME_STEP = "profile_first_name"
+PROFILE_LAST_NAME_STEP = "profile_last_name"
+PROFILE_REQUIRED_ROLES = {"manager", "top_manager"}
 
 DEFAULT_DEPARTMENTS = [
     "Filial",
@@ -654,6 +657,35 @@ def update_allowed_user_telegram_id_by_phone(phone: str, telegram_id: int):
     return False
 
 
+def update_allowed_user_profile_names_by_telegram_id(
+    telegram_id: int,
+    first_name: str,
+    last_name: str,
+) -> bool:
+    rows, ws, headers = load_allowed_users_with_row_numbers()
+
+    first_name_col = find_header_col_number(headers, ["first_name", "first name"])
+    last_name_col = find_header_col_number(headers, ["last_name", "last name"])
+    full_name_col = find_header_col_number(headers, ["full_name", "full name"])
+
+    if first_name_col is None or last_name_col is None:
+        raise Exception("У листі allowed_users не знайдено колонки first_name / last_name")
+
+    for row in rows:
+        row_tg = normalize_text(row.get("telegram_id", ""))
+        if row_tg == str(telegram_id) and is_active_flag(row.get("is_active", "")):
+            row_number = row["_row_number"]
+            ws.update_cell(row_number, first_name_col, first_name)
+            ws.update_cell(row_number, last_name_col, last_name)
+
+            if full_name_col is not None:
+                ws.update_cell(row_number, full_name_col, f"{first_name} {last_name}".strip())
+
+            return True
+
+    return False
+
+
 def get_admin_telegram_ids() -> List[int]:
     rows, _ws = load_allowed_users()
     result = []
@@ -928,6 +960,98 @@ async def require_phone_verification(message: types.Message):
         "Натисни кнопку нижче, щоб поділитися своїм номером телефону.",
         reply_markup=phone_request_keyboard
     )
+
+
+def is_valid_profile_name(value: Any) -> bool:
+    text = normalize_text(value)
+    return len(text) >= 2 and not text.startswith("/")
+
+
+async def ensure_required_profile_names(message: types.Message) -> bool:
+    user_id = message.from_user.id
+    row = get_allowed_user_by_telegram_id(user_id)
+    if not row:
+        return True
+
+    role = normalize_text(row.get("role", "")).lower()
+    if role not in PROFILE_REQUIRED_ROLES:
+        return True
+
+    first_name = normalize_text(row.get("first_name", ""))
+    last_name = normalize_text(row.get("last_name", ""))
+
+    if not first_name:
+        user_state[user_id] = {"step": PROFILE_FIRST_NAME_STEP}
+        await message.answer(
+            "👤 Введи ім'я менеджера:",
+            reply_markup=ReplyKeyboardRemove()
+        )
+        return False
+
+    if not last_name:
+        user_state[user_id] = {
+            "step": PROFILE_LAST_NAME_STEP,
+            "profile_first_name": first_name,
+        }
+        await message.answer(
+            "👤 Введи прізвище менеджера:",
+            reply_markup=ReplyKeyboardRemove()
+        )
+        return False
+
+    return True
+
+
+async def handle_profile_name_step(message: types.Message, state: Dict[str, Any], raw_text: str) -> bool:
+    step = state.get("step")
+    if step not in (PROFILE_FIRST_NAME_STEP, PROFILE_LAST_NAME_STEP):
+        return False
+
+    value = normalize_text(raw_text)
+    if not is_valid_profile_name(value):
+        await message.answer("❌ Введи текстом, мінімум 2 символи.")
+        return True
+
+    user_id = message.from_user.id
+
+    if step == PROFILE_FIRST_NAME_STEP:
+        user_state[user_id] = {
+            "step": PROFILE_LAST_NAME_STEP,
+            "profile_first_name": value,
+        }
+        await message.answer("👤 Введи прізвище менеджера:")
+        return True
+
+    first_name = normalize_text(state.get("profile_first_name", ""))
+    if not first_name:
+        first_name = get_allowed_user_profile(user_id).get("first_name", "")
+
+    if not first_name:
+        user_state[user_id] = {"step": PROFILE_FIRST_NAME_STEP}
+        await message.answer("👤 Введи ім'я менеджера:")
+        return True
+
+    try:
+        updated = update_allowed_user_profile_names_by_telegram_id(
+            telegram_id=user_id,
+            first_name=first_name,
+            last_name=value,
+        )
+    except Exception as exc:
+        await message.answer(f"❌ Не вдалося зберегти ім'я/прізвище: {exc}")
+        return True
+
+    if not updated:
+        await message.answer("❌ Не вдалося знайти твій рядок в allowed_users.")
+        return True
+
+    refresh_user_role_from_google(user_id)
+    reset_user_calculation(user_id)
+    await message.answer(
+        "✅ Дані збережено.\n\nБот готовий. Обери дію:",
+        reply_markup=get_main_keyboard(user_id)
+    )
+    return True
 
 
 async def show_next_registration_request(message: types.Message, request_index: int = 0):
@@ -2286,6 +2410,8 @@ async def handle_message(message: types.Message):
         refresh_user_role_from_google(user_id)
 
         if is_user_authorized(user_id):
+            if not await ensure_required_profile_names(message):
+                return
             reset_user_calculation(user_id)
             await message.answer(
                 "Бот готовий. Обери дію:",
@@ -2328,6 +2454,9 @@ async def handle_message(message: types.Message):
                 catalog_search_access=allowed_user.get("catalog_search_access", False),
             )
 
+            if not await ensure_required_profile_names(message):
+                return
+
             await message.answer(
                 "✅ Доступ дозволено.\n\nБот готовий. Обери дію:",
                 reply_markup=get_main_keyboard(user_id)
@@ -2358,6 +2487,10 @@ async def handle_message(message: types.Message):
 
     state = user_state.get(user_id, {})
     step = state.get("step")
+
+    if step in (PROFILE_FIRST_NAME_STEP, PROFILE_LAST_NAME_STEP):
+        if await handle_profile_name_step(message, state, raw_text):
+            return
 
     if text == "🔙 головне меню":
         reset_user_calculation(user_id)
