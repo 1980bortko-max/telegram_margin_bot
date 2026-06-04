@@ -64,7 +64,6 @@ PROMO_ACCESS_COLUMN = "Кнопка - промокод"
 CATALOG_SEARCH_ACCESS_COLUMN = "Кнопка-Пошук рідин"
 PROFILE_FIRST_NAME_STEP = "profile_first_name"
 PROFILE_LAST_NAME_STEP = "profile_last_name"
-PROFILE_REQUIRED_ROLES = {"manager", "top_manager"}
 
 DEFAULT_DEPARTMENTS = [
     "Filial",
@@ -971,10 +970,6 @@ async def ensure_required_profile_names(message: types.Message) -> bool:
     user_id = message.from_user.id
     row = get_allowed_user_by_telegram_id(user_id)
     if not row:
-        return True
-
-    role = normalize_text(row.get("role", "")).lower()
-    if role not in PROFILE_REQUIRED_ROLES:
         return True
 
     first_name = normalize_text(row.get("first_name", ""))
