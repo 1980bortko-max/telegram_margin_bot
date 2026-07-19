@@ -721,7 +721,7 @@ settings_keyboard = ReplyKeyboardMarkup(
 def get_main_keyboard(user_id: int):
     keyboard = [
         [KeyboardButton(text="Розрахувати ціну")],
-        [KeyboardButton(text="📝 Опитувальник")],
+        [KeyboardButton(text="📝 Зміна групи націнки")],
     ]
 
     if has_catalog_search_access(user_id):
@@ -2805,11 +2805,11 @@ async def handle_message(message: types.Message):
         await show_next_registration_request(message, request_index=0)
         return
 
-    if text == "📝 опитувальник":
+    if text == "📝 зміна групи націнки":
         try:
             await start_survey(message, default_manager="")
         except Exception as e:
-            await message.answer(f"❌ Помилка запуску опитувальника: {e}", reply_markup=get_main_keyboard(user_id))
+            await message.answer(f"❌ Помилка запуску зміни групи націнки: {e}", reply_markup=get_main_keyboard(user_id))
         return
 
     if text == "розрахувати ціну" or text == "🔄 новий розрахунок":

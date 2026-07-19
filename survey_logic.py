@@ -294,7 +294,7 @@ def build_finish_keyboard() -> ReplyKeyboardMarkup:
         keyboard=[
             [KeyboardButton(text="Оновити довідники")],
             [KeyboardButton(text="Розрахувати ціну")],
-            [KeyboardButton(text="📝 Опитувальник")],
+            [KeyboardButton(text="📝 Зміна групи націнки")],
         ],
         resize_keyboard=True
     )
@@ -463,7 +463,7 @@ async def handle_survey_message(message: types.Message):
 
     except Exception as e:
         await message.answer(
-            f"❌ Помилка опитувальника: {e}",
+            f"❌ Помилка зміни групи націнки: {e}",
             reply_markup=build_finish_keyboard()
         )
 

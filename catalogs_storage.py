@@ -258,7 +258,7 @@ def build_catalogs() -> Dict[str, List[str]]:
         "categories": get_categories_from_rules(),
         "brands": get_brands_from_rules(),
 
-        # опитувальник
+        # зміна групи націнки
         "survey_client_groups": get_survey_client_groups(),
         "client_types": get_client_types(),
         "managers": get_managers(),
@@ -288,7 +288,7 @@ def validate_catalogs(catalogs: Dict[str, List[str]]) -> List[str]:
 
     required_catalogs = {
         "client_types": "Типи клієнтів",
-        "survey_client_groups": "Клієнтські групи (опитувальник)",
+        "survey_client_groups": "Клієнтські групи (зміна групи націнки)",
         "managers": "Менеджери",
         "revenue_ranges": "Виручка",
         "orders_ranges": "Кількість замовлень",
