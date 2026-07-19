@@ -27,7 +27,7 @@ from catalogs import (
     split_multi_value,
 )
 from margin_logic import calculate_margin_result
-from survey_logic import start_survey, handle_survey_message, is_survey_active
+from survey_logic import start_survey, handle_survey_message, is_survey_active, set_main_keyboard_provider
 from telegram_catalog_bot.catalog_search.liquids_search import (
     LiquidsAppliedFiltersReport,
     LiquidsFilters,
@@ -742,6 +742,9 @@ def get_main_keyboard(user_id: int):
         keyboard=keyboard,
         resize_keyboard=True
     )
+
+
+set_main_keyboard_provider(get_main_keyboard)
 
 
 def get_after_result_keyboard(user_id: int):

@@ -25,7 +25,7 @@ NEW_CLIENT_FIELDS = [
     "client_type",
     "client_name",
     "client_phone",
-    "client_uuid",
+    "manager_type",
     "manager",
     "client_group_type",
     "revenue_range",
@@ -41,9 +41,8 @@ NEW_CLIENT_FIELDS = [
 
 EXISTING_CLIENT_FIELDS = [
     "client_type",
-    "client_name",
     "client_phone",
-    "client_uuid",
+    "manager_type",
     "manager",
     "client_group_type",
     "revenue_range",
@@ -62,6 +61,7 @@ FIELD_TITLES = {
     "client_name": "Найменування клієнта",
     "client_phone": "Телефон клієнта",
     "client_uuid": "ID (UUID) клієнта (OMC)",
+    "manager_type": "Тип менеджера",
     "manager": "Менеджер",
     "client_group_type": "Тип клієнтської групи",
     "revenue_range": "Виручка від реалізації",
@@ -101,6 +101,10 @@ HEADER_ALIASES = {
         "ID (UUID) клієнта (OMC)",
         "ID (UUID) клієнта NEW",
         "ID (UUID) клієнта NEW (OMC)",
+    ],
+    "manager_type": [
+        "Тип менеджера",
+        "Тим менеджера",
     ],
     "manager": [
         "Менеджер",
@@ -215,12 +219,15 @@ def find_header_indexes(headers: List[str], aliases: List[str]) -> List[int]:
 def build_row_by_headers(headers: List[str], answers: Dict[str, Any]) -> List[str]:
     row = [""] * len(headers)
 
+    client_phone = str(answers.get("client_phone", ""))
+
     values_map = {
         "timestamp": datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
         "client_type": str(answers.get("client_type", "")),
-        "client_name": str(answers.get("client_name", "")),
-        "client_phone": str(answers.get("client_phone", "")),
-        "client_uuid": str(answers.get("client_uuid", "")),
+        "client_name": str(answers.get("client_name", "")) or client_phone,
+        "client_phone": client_phone,
+        "client_uuid": str(answers.get("client_uuid", "")) or client_phone,
+        "manager_type": str(answers.get("manager_type", "")),
         "manager": str(answers.get("manager", "")),
         "client_group_type": str(answers.get("client_group_type", "")),
         "revenue_range": str(answers.get("revenue_range", "")),
@@ -289,7 +296,18 @@ def build_text_input_keyboard() -> ReplyKeyboardMarkup:
     )
 
 
-def build_finish_keyboard() -> ReplyKeyboardMarkup:
+_main_keyboard_provider = None
+
+
+def set_main_keyboard_provider(provider) -> None:
+    global _main_keyboard_provider
+    _main_keyboard_provider = provider
+
+
+def build_finish_keyboard(user_id: int) -> ReplyKeyboardMarkup:
+    if _main_keyboard_provider is not None:
+        return _main_keyboard_provider(user_id)
+
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="Оновити довідники")],
@@ -319,10 +337,19 @@ def get_fields_for_client_type(client_type: str) -> List[str]:
     return EXISTING_CLIENT_FIELDS
 
 
-def get_catalog_options(catalogs: Dict[str, Any], field: str) -> List[str]:
+def get_catalog_options(catalogs: Dict[str, Any], field: str, answers: Optional[Dict[str, Any]] = None) -> List[str]:
+    if field == "manager_type":
+        managers_by_type = catalogs.get("managers_by_type", {})
+        return sorted((str(x) for x in managers_by_type.keys() if str(x).strip()), key=lambda v: v.lower())
+
+    if field == "manager":
+        managers_by_type = catalogs.get("managers_by_type", {})
+        manager_type = str((answers or {}).get("manager_type", "")).strip()
+        values = managers_by_type.get(manager_type, []) or catalogs.get("managers", [])
+        return [str(x) for x in values if str(x).strip()]
+
     mapping = {
         "client_type": catalogs.get("client_types", []),
-        "manager": catalogs.get("managers", []),
         "client_group_type": catalogs.get("survey_client_groups", []),
         "revenue_range": catalogs.get("revenue_ranges", []),
         "orders_range": catalogs.get("orders_ranges", []),
@@ -366,7 +393,7 @@ async def ask_current_question(message: types.Message):
         save_survey_result_to_google(state["answers"])
         await message.answer(
             "✅ Опитування завершено. Дані успішно записані в Google таблицю.",
-            reply_markup=build_finish_keyboard()
+            reply_markup=build_finish_keyboard(user_id)
         )
         del survey_state[user_id]
         return
@@ -381,13 +408,13 @@ async def ask_current_question(message: types.Message):
         return
 
     catalogs = state.get("catalogs", {})
-    options = get_catalog_options(catalogs, field)
+    options = get_catalog_options(catalogs, field, state.get("answers", {}))
 
     if not options:
        await message.answer(
         f"❌ Немає значень для поля:\n{FIELD_TITLES[field]}\n\n"
         f"Натисни 'Оновити довідники' і спробуй ще раз.",
-        reply_markup=build_finish_keyboard()
+        reply_markup=build_finish_keyboard(user_id)
        )
        del survey_state[user_id]
        return
@@ -427,7 +454,7 @@ async def handle_survey_message(message: types.Message):
         del survey_state[user_id]
         await message.answer(
             "❌ Опитування скасовано.",
-            reply_markup=build_finish_keyboard()
+            reply_markup=build_finish_keyboard(user_id)
         )
         return True
 
@@ -439,12 +466,12 @@ async def handle_survey_message(message: types.Message):
             del survey_state[user_id]
             await message.answer(
                 "❌ Стан опитування пошкоджено. Запусти опитування ще раз.",
-                reply_markup=build_finish_keyboard()
+                reply_markup=build_finish_keyboard(user_id)
             )
             return True
 
         if not is_text_field(field):
-            options = get_catalog_options(state.get("catalogs", {}), field)
+            options = get_catalog_options(state.get("catalogs", {}), field, state.get("answers", {}))
             if raw_text not in options:
                 await message.answer(
                     f"❌ Обери значення кнопкою для поля:\n{FIELD_TITLES[field]}",
@@ -464,7 +491,7 @@ async def handle_survey_message(message: types.Message):
     except Exception as e:
         await message.answer(
             f"❌ Помилка зміни групи націнки: {e}",
-            reply_markup=build_finish_keyboard()
+            reply_markup=build_finish_keyboard(user_id)
         )
 
         if user_id in survey_state:

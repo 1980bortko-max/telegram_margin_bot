@@ -81,6 +81,24 @@ def get_managers() -> List[str]:
     return get_sheet_column_values("manager", "manager")
 
 
+def get_managers_by_type() -> Dict[str, List[str]]:
+    spreadsheet = get_spreadsheet()
+    ws = spreadsheet.worksheet("manager")
+    rows = sheet_to_dicts(ws)
+
+    grouped: Dict[str, List[str]] = {}
+    for row in rows:
+        manager_type = normalize_text(row.get("Тим менеджера", ""))
+        manager_name = normalize_text(row.get("manager", ""))
+
+        if not manager_type or not manager_name:
+            continue
+
+        grouped.setdefault(manager_type, []).append(manager_name)
+
+    return {manager_type: unique_sorted(names) for manager_type, names in grouped.items()}
+
+
 def get_client_types() -> List[str]:
     return get_sheet_column_values("client_types", "client_types")
 
@@ -262,6 +280,7 @@ def build_catalogs() -> Dict[str, List[str]]:
         "survey_client_groups": get_survey_client_groups(),
         "client_types": get_client_types(),
         "managers": get_managers(),
+        "managers_by_type": get_managers_by_type(),
         "revenue_ranges": get_revenue_ranges(),
         "orders_ranges": get_orders_ranges(),
         "debounce_percent_ranges": get_debounce_percent_ranges(),
@@ -290,6 +309,7 @@ def validate_catalogs(catalogs: Dict[str, List[str]]) -> List[str]:
         "client_types": "Типи клієнтів",
         "survey_client_groups": "Клієнтські групи (зміна групи націнки)",
         "managers": "Менеджери",
+        "managers_by_type": "Менеджери за типом",
         "revenue_ranges": "Виручка",
         "orders_ranges": "Кількість замовлень",
         "debounce_percent_ranges": "% дебіторки",

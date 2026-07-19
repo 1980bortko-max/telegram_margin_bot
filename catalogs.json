@@ -172,6 +172,31 @@
     "wnt_manager",
     "Yurii Starikov"
   ],
+  "managers_by_type": {
+    "Manager": [
+      "Anastasia.Ivanova",
+      "Anastasiia.Kobylnyk",
+      "Andrii.Rozniuk",
+      "Anna.Mikhalova",
+      "Anton.Satcovschi",
+      "Denys.Shmak",
+      "Igor.Ryabtsev",
+      "Ion.Dimov",
+      "Petro Petryshak",
+      "Sergii.Zavadskyi",
+      "Taras.Senyshyn",
+      "Volodymyr.Biletskyi",
+      "Yurii Starikov"
+    ],
+    "Branch manager": [
+      "hgb_manager",
+      "lsg_manager",
+      "rnb_manager",
+      "sim_manager",
+      "stp_manager",
+      "wnt_manager"
+    ]
+  },
   "revenue_ranges": [
     "0-500",
     "1000-2000",
