@@ -5,6 +5,8 @@ import json
 import sys
 if sys.platform != "win32":
     import fcntl
+else:
+    import msvcrt
 import os
 from datetime import datetime
 from pathlib import Path
@@ -3007,12 +3009,17 @@ async def main():
     pid_path = project_dir / ".bot.pid"
 
     bot_lock_file = (project_dir / ".bot.lock").open("w", encoding="utf-8")
-    if sys.platform != "win32":
-        try:
+    bot_lock_file.write("1")
+    bot_lock_file.flush()
+    bot_lock_file.seek(0)
+    try:
+        if sys.platform != "win32":
             fcntl.flock(bot_lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            print("Telegram bot is already running. Stop the current bot before starting another one.", flush=True)
-            return
+        else:
+            msvcrt.locking(bot_lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+    except (BlockingIOError, OSError):
+        print("Telegram bot is already running. Stop the current bot before starting another one.", flush=True)
+        return
 
     pid_path.write_text(str(os.getpid()), encoding="utf-8")
     try:
