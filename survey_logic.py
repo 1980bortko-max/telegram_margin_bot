@@ -348,6 +348,20 @@ def get_catalog_options(catalogs: Dict[str, Any], field: str, answers: Optional[
         values = managers_by_type.get(manager_type, []) or catalogs.get("managers", [])
         return [str(x) for x in values if str(x).strip()]
 
+    price_group_fields = {
+        "new_oms_group": ("oms_price_groups_by_client_group", "oms_price_groups"),
+        "current_oms_group": ("oms_price_groups_by_client_group", "oms_price_groups"),
+        "new_nextis_group": ("nextis_price_groups_by_client_group", "nextis_price_groups"),
+        "current_nextis_markup": ("nextis_price_groups_by_client_group", "nextis_price_groups"),
+    }
+
+    if field in price_group_fields:
+        grouped_key, flat_key = price_group_fields[field]
+        grouped = catalogs.get(grouped_key, {})
+        client_group_type = str((answers or {}).get("client_group_type", "")).strip()
+        values = grouped.get(client_group_type, []) or catalogs.get(flat_key, [])
+        return [str(x) for x in values if str(x).strip()]
+
     mapping = {
         "client_type": catalogs.get("client_types", []),
         "client_group_type": catalogs.get("survey_client_groups", []),
@@ -358,10 +372,6 @@ def get_catalog_options(catalogs: Dict[str, Any], field: str, answers: Optional[
         "returns_percent": catalogs.get("returns_percent_ranges", []),
         "focus_value": catalogs.get("focus_values", []),
         "logistics_zone": catalogs.get("logistics_zones", []),
-        "new_nextis_group": catalogs.get("nextis_price_groups", []),
-        "new_oms_group": catalogs.get("oms_price_groups", []),
-        "current_oms_group": catalogs.get("oms_price_groups", []),
-        "current_nextis_markup": catalogs.get("nextis_price_groups", []),
     }
 
     values = mapping.get(field, [])

@@ -211,6 +211,39 @@ def get_nextis_price_groups() -> List[str]:
     return unique_sorted(result)
 
 
+def get_price_groups_by_client_group(sheet_name: str) -> Dict[str, List[str]]:
+    spreadsheet = get_spreadsheet()
+    ws = spreadsheet.worksheet(sheet_name)
+    values = ws.get_all_values()
+
+    if not values:
+        return {}
+
+    grouped: Dict[str, List[str]] = {}
+
+    for row in values[1:]:
+        if not row:
+            continue
+
+        price_group = normalize_text(row[0]) if len(row) > 0 else ""
+        client_group = normalize_text(row[1]) if len(row) > 1 else ""
+
+        if not price_group or not client_group:
+            continue
+
+        grouped.setdefault(client_group, []).append(price_group)
+
+    return {client_group: unique_sorted(names) for client_group, names in grouped.items()}
+
+
+def get_oms_price_groups_by_client_group() -> Dict[str, List[str]]:
+    return get_price_groups_by_client_group("цінова група OMS")
+
+
+def get_nextis_price_groups_by_client_group() -> Dict[str, List[str]]:
+    return get_price_groups_by_client_group("цінова група Nextis")
+
+
 def get_calc_client_groups() -> List[str]:
     spreadsheet = get_spreadsheet()
     ws = spreadsheet.worksheet("dynamic_margin_conditions")
@@ -292,6 +325,8 @@ def build_catalogs() -> Dict[str, List[str]]:
         # окремі довідники для OMS / Nextis
         "oms_price_groups": get_oms_price_groups(),
         "nextis_price_groups": get_nextis_price_groups(),
+        "oms_price_groups_by_client_group": get_oms_price_groups_by_client_group(),
+        "nextis_price_groups_by_client_group": get_nextis_price_groups_by_client_group(),
     }
 
 
