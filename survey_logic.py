@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 
+import json
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 
@@ -54,6 +55,59 @@ EXISTING_CLIENT_FIELDS = [
     "new_oms_group",
     "price_change_reason",
 ]
+
+# Завжди задаються, якщо присутні у сценарії — вимкнути не можна.
+MANDATORY_SURVEY_FIELDS = {"client_type", "client_name", "client_phone"}
+
+SCENARIO_KEY_NEW = "new_client"
+SCENARIO_KEY_EXISTING = "existing_client"
+
+NEW_CLIENT_TOGGLEABLE_FIELDS = [f for f in NEW_CLIENT_FIELDS if f not in MANDATORY_SURVEY_FIELDS]
+EXISTING_CLIENT_TOGGLEABLE_FIELDS = [f for f in EXISTING_CLIENT_FIELDS if f not in MANDATORY_SURVEY_FIELDS]
+
+SURVEY_FIELD_SETTINGS_FILE = "survey_field_settings.json"
+
+TOGGLEABLE_FIELD_LABELS = {
+    "manager_type": "Тип менеджера",
+    "manager": "Менеджер",
+    "client_group_type": "Тип клієнтської групи",
+    "revenue_range": "Виручка від реалізації",
+    "orders_range": "Кількість замовлень",
+    "debounce_percent": "% дебіторки",
+    "debounce_days": "Днів дебіторки",
+    "returns_percent": "% повернень",
+    "focus_value": "Фокус задача %",
+    "logistics_zone": "Логістична зона",
+    "new_nextis_group": "Нова група Nextis",
+    "new_oms_group": "Нова група OMS",
+    "current_oms_group": "Діюча група OMS",
+    "current_nextis_markup": "Діюча націнка Nextis",
+    "price_change_reason": "Причина зміни націнки",
+}
+
+
+def load_survey_field_settings() -> Dict[str, Dict[str, bool]]:
+    try:
+        with open(SURVEY_FIELD_SETTINGS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def save_survey_field_settings(settings: Dict[str, Dict[str, bool]]) -> None:
+    with open(SURVEY_FIELD_SETTINGS_FILE, "w", encoding="utf-8") as f:
+        json.dump(settings, f, ensure_ascii=False, indent=2)
+
+
+def is_survey_field_enabled(scenario_key: str, field: str) -> bool:
+    settings = load_survey_field_settings()
+    return bool(settings.get(scenario_key, {}).get(field, True))
+
+
+def set_survey_field_enabled(scenario_key: str, field: str, enabled: bool) -> None:
+    settings = load_survey_field_settings()
+    settings.setdefault(scenario_key, {})[field] = enabled
+    save_survey_field_settings(settings)
 
 
 FIELD_TITLES = {
@@ -337,8 +391,14 @@ def is_survey_active(user_id: int) -> bool:
 
 def get_fields_for_client_type(client_type: str) -> List[str]:
     if client_type == CLIENT_TYPE_NEW:
-        return NEW_CLIENT_FIELDS
-    return EXISTING_CLIENT_FIELDS
+        base_fields, scenario_key = NEW_CLIENT_FIELDS, SCENARIO_KEY_NEW
+    else:
+        base_fields, scenario_key = EXISTING_CLIENT_FIELDS, SCENARIO_KEY_EXISTING
+
+    return [
+        field for field in base_fields
+        if field in MANDATORY_SURVEY_FIELDS or is_survey_field_enabled(scenario_key, field)
+    ]
 
 
 def get_catalog_options(catalogs: Dict[str, Any], field: str, answers: Optional[Dict[str, Any]] = None) -> List[str]:

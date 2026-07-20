@@ -29,7 +29,19 @@ from catalogs import (
     split_multi_value,
 )
 from margin_logic import calculate_margin_result
-from survey_logic import start_survey, handle_survey_message, is_survey_active, set_main_keyboard_provider
+from survey_logic import (
+    start_survey,
+    handle_survey_message,
+    is_survey_active,
+    set_main_keyboard_provider,
+    SCENARIO_KEY_NEW,
+    SCENARIO_KEY_EXISTING,
+    NEW_CLIENT_TOGGLEABLE_FIELDS,
+    EXISTING_CLIENT_TOGGLEABLE_FIELDS,
+    TOGGLEABLE_FIELD_LABELS,
+    is_survey_field_enabled,
+    set_survey_field_enabled,
+)
 from telegram_catalog_bot.catalog_search.liquids_search import (
     LiquidsAppliedFiltersReport,
     LiquidsFilters,
@@ -714,10 +726,59 @@ settings_keyboard = ReplyKeyboardMarkup(
         [KeyboardButton(text="⚙️ Доступ до індивідуальної націнки")],
         [KeyboardButton(text="🎟 Доступ до промокодів")],
         [KeyboardButton(text="🔔 Сповіщення промокодів")],
+        [KeyboardButton(text="📝 Питання зміни групи націнки")],
         [KeyboardButton(text="🔙 Головне меню")],
     ],
     resize_keyboard=True
 )
+
+survey_fields_scenario_keyboard = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="🆕 Новий клієнт")],
+        [KeyboardButton(text="🔁 Клієнт, з яким вже працюємо")],
+        [KeyboardButton(text="🔙 Головне меню")],
+    ],
+    resize_keyboard=True
+)
+
+SURVEY_SCENARIO_TITLES = {
+    SCENARIO_KEY_NEW: "Новий клієнт",
+    SCENARIO_KEY_EXISTING: "Клієнт, з яким вже працюємо",
+}
+
+SURVEY_SCENARIO_FIELDS = {
+    SCENARIO_KEY_NEW: NEW_CLIENT_TOGGLEABLE_FIELDS,
+    SCENARIO_KEY_EXISTING: EXISTING_CLIENT_TOGGLEABLE_FIELDS,
+}
+
+
+def build_survey_fields_toggle_keyboard(scenario_key: str):
+    fields = SURVEY_SCENARIO_FIELDS.get(scenario_key, [])
+    keyboard_rows = []
+
+    for field in fields:
+        enabled = is_survey_field_enabled(scenario_key, field)
+        status = "✅" if enabled else "❌"
+        label = TOGGLEABLE_FIELD_LABELS.get(field, field)
+        keyboard_rows.append([KeyboardButton(text=f"{status} {label}")])
+
+    keyboard_rows.append([KeyboardButton(text="🔙 Налаштування")])
+    keyboard_rows.append([KeyboardButton(text="🔙 Головне меню")])
+
+    return ReplyKeyboardMarkup(keyboard=keyboard_rows, resize_keyboard=True)
+
+
+async def show_survey_fields_toggle(message: types.Message, scenario_key: str):
+    user_state[message.from_user.id] = {
+        "step": "survey_fields_toggle",
+        "scenario_key": scenario_key,
+    }
+
+    title = SURVEY_SCENARIO_TITLES.get(scenario_key, scenario_key)
+    await message.answer(
+        f"Питання для сценарію \"{title}\".\nНатисни на питання, щоб увімкнути/вимкнути його:",
+        reply_markup=build_survey_fields_toggle_keyboard(scenario_key)
+    )
 
 
 def get_main_keyboard(user_id: int):
@@ -2500,6 +2561,14 @@ async def handle_message(message: types.Message):
         )
         return
 
+    if text == "🔙 налаштування":
+        if not is_admin(user_id):
+            await message.answer("❌ Ця дія доступна лише адміну.", reply_markup=get_main_keyboard(user_id))
+            return
+        user_state.pop(user_id, None)
+        await message.answer("⚙️ Налаштування", reply_markup=settings_keyboard)
+        return
+
     if text == "🔎 пошук рідин":
         if not has_catalog_search_access(user_id):
             await message.answer("❌ Немає доступу", reply_markup=get_main_keyboard(user_id))
@@ -2538,6 +2607,17 @@ async def handle_message(message: types.Message):
             await message.answer("❌ Ця дія доступна лише адміну.", reply_markup=get_main_keyboard(user_id))
             return
         await message.answer("⚙️ Налаштування", reply_markup=settings_keyboard)
+        return
+
+    if "питання зміни групи націнки" in text:
+        if not is_admin(user_id):
+            await message.answer("❌ Ця дія доступна лише адміну.", reply_markup=get_main_keyboard(user_id))
+            return
+        user_state[user_id] = {"step": "survey_fields_scenario"}
+        await message.answer(
+            "Для якого сценарію налаштувати питання?",
+            reply_markup=survey_fields_scenario_keyboard
+        )
         return
 
     if text == "🖥 режим crm":
@@ -2739,6 +2819,52 @@ async def handle_message(message: types.Message):
             return
 
         await message.answer("Обери дію кнопкою.", reply_markup=access_action_keyboard)
+        return
+
+    if step == "survey_fields_scenario":
+        if not is_admin(user_id):
+            await message.answer("❌ Ця дія доступна лише адміну.", reply_markup=get_main_keyboard(user_id))
+            return
+
+        if text == "🆕 новий клієнт":
+            await show_survey_fields_toggle(message, SCENARIO_KEY_NEW)
+            return
+
+        if text == "🔁 клієнт, з яким вже працюємо":
+            await show_survey_fields_toggle(message, SCENARIO_KEY_EXISTING)
+            return
+
+        await message.answer(
+            "Обери сценарій кнопкою.",
+            reply_markup=survey_fields_scenario_keyboard
+        )
+        return
+
+    if step == "survey_fields_toggle":
+        if not is_admin(user_id):
+            await message.answer("❌ Ця дія доступна лише адміну.", reply_markup=get_main_keyboard(user_id))
+            return
+
+        scenario_key = state.get("scenario_key", "")
+        fields = SURVEY_SCENARIO_FIELDS.get(scenario_key, [])
+
+        selected_field = None
+        for field in fields:
+            label = TOGGLEABLE_FIELD_LABELS.get(field, field)
+            if raw_text == f"✅ {label}" or raw_text == f"❌ {label}":
+                selected_field = field
+                break
+
+        if not selected_field:
+            await message.answer(
+                "❌ Обери питання кнопкою зі списку.",
+                reply_markup=build_survey_fields_toggle_keyboard(scenario_key)
+            )
+            return
+
+        currently_enabled = is_survey_field_enabled(scenario_key, selected_field)
+        set_survey_field_enabled(scenario_key, selected_field, not currently_enabled)
+        await show_survey_fields_toggle(message, scenario_key)
         return
 
     if step == "promo_subscribers_manage":
