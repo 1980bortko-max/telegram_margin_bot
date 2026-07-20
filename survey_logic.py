@@ -403,6 +403,20 @@ async def ask_current_question(message: types.Message):
     fields = state.get("scenario_fields", [])
     step = state.get("step", 0)
 
+    while step < len(fields):
+        field = fields[step]
+
+        if is_text_field(field):
+            break
+
+        options = get_catalog_options(state.get("catalogs", {}), field, state.get("answers", {}))
+        if options:
+            break
+
+        step += 1
+
+    state["step"] = step
+
     if step >= len(fields):
         save_survey_result_to_google(state["answers"])
         await message.answer(
@@ -423,15 +437,6 @@ async def ask_current_question(message: types.Message):
 
     catalogs = state.get("catalogs", {})
     options = get_catalog_options(catalogs, field, state.get("answers", {}))
-
-    if not options:
-       await message.answer(
-        f"❌ Немає значень для поля:\n{FIELD_TITLES[field]}\n\n"
-        f"Натисни 'Оновити довідники' і спробуй ще раз.",
-        reply_markup=build_finish_keyboard(user_id)
-       )
-       del survey_state[user_id]
-       return
 
     await message.answer(
         f"Обери значення:\n{FIELD_TITLES[field]}",
