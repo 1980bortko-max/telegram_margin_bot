@@ -3023,6 +3023,8 @@ async def main():
 
     pid_path.write_text(str(os.getpid()), encoding="utf-8")
     try:
+        me = await bot.get_me()
+        print(f"Bot @{me.username} is running (PID {os.getpid()}). Press Ctrl+C to stop.", flush=True)
         asyncio.create_task(poll_promo_new_rows())
         await dp.start_polling(bot)
     finally:
