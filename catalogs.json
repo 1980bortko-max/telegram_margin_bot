@@ -141,7 +141,6 @@
   ],
   "survey_client_groups": [
     "AMT",
-    "AUTOFUN",
     "EXPORT",
     "KFZ",
     "NX",
@@ -315,5 +314,71 @@
     "NX_8",
     "NX_8,5",
     "NX_9"
-  ]
+  ],
+  "oms_price_groups_by_client_group": {
+    "Oleg_request": [
+      "Oleg_request_1",
+      "Oleg_request_3",
+      "Oleg_request_5",
+      "Oleg_request_8"
+    ],
+    "NX": [
+      "NX_10",
+      "NX_12,5",
+      "NX_15",
+      "NX_17,5",
+      "NX_2",
+      "NX_20",
+      "NX_22",
+      "NX_23",
+      "NX_28",
+      "NX_3",
+      "NX_5",
+      "NX_6",
+      "NX_7",
+      "NX_7,2",
+      "NX_7,5",
+      "NX_7,6",
+      "NX_8",
+      "NX_8,5",
+      "NX_9"
+    ],
+    "AUTOFUN": [
+      "AUTOFUN Mitarbeiter"
+    ],
+    "EXPORT": [
+      "EXPORT Gold/1,32 1.32",
+      "EXPORT Platinum/1,29 1.29",
+      "EXPORT Silver/1,35 1.35"
+    ],
+    "KFZ": [
+      "KFZ Aluminium/1,6 1.6",
+      "KFZ Amber/1,49 1.49",
+      "KFZ Bronze/1,52 1.52",
+      "KFZ Gold/1,41 1.41",
+      "KFZ Pearl/1,56 1.56",
+      "KFZ Platinum/1,38 1.38",
+      "KFZ Silver/1,47 1.47/UA",
+      "KFZ Steel/1,7 1.7",
+      "KFZ Wooden/1,72 1.72"
+    ],
+    "AMT": [
+      "AMT Feuerwehr",
+      "AMT Polizei",
+      "AMT Stadtbus",
+      "AMT Wien Energie",
+      "AMT Wiener Linien",
+      "AMT Wiener Netze",
+      "Retungsdienst (med Personal)"
+    ],
+    "Generali": [
+      "Generali"
+    ],
+    "Privat": [
+      "Privat Bronze/Hofkunde",
+      "Privat Gold/Stammkunde 1,75 1.75",
+      "Privat Silver/Global 1,82 1.82"
+    ]
+  },
+  "nextis_price_groups_by_client_group": {}
 }
